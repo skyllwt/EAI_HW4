@@ -19,9 +19,9 @@ class Config:
     """the object we want to grasp"""
     checkpoint: str = None
     """if not None, then we will continue training from this checkpoint"""
-    max_iter: int = 10000
+    max_iter: int = 20000
     """the maximum number of iterations"""
-    batch_size: int = 16
+    batch_size: int = 32
     """the batch size for training"""
     learning_rate: float = 1e-3
     """maximum (and initial) learning rates"""
@@ -29,7 +29,7 @@ class Config:
     """we use cosine decay for learning rate, and this is the minimum (and final) learning rate"""
     log_interval: int = 100
     """log for each log_interval iterations"""
-    save_interval: int = 2500
+    save_interval: int = 5000
     """save the model every save_interval iterations"""
     val_interval: int = 500
     """get metric from validation set every val_interval iterations"""
@@ -39,7 +39,7 @@ class Config:
     """how many workers to use for data loading, if you are debugging, use 0 so that it won't create new processes"""
     seed: int = 0
     """the random seed for training"""
-    device: str = "cpu"
+    device: str = "cuda:0"
     """the device to use for training, you can use cuda:0 if you have a gpu"""
     point_num: int = 1024
     """number of points sampled from the full observation point cloud"""
