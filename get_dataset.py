@@ -2,6 +2,7 @@ import argparse
 from typing import Optional, Tuple, List
 import numpy as np
 import cv2
+from tqdm import tqdm
 from pyapriltags import Detector
 
 from src.type import Grasp
@@ -57,9 +58,7 @@ def main():
     env = WrapperEnv(env_config)
 
 
-    for i in range(num):
-        print(f"Generating dataset {i + 1}/{num}...")
-
+    for i in tqdm(range(num), desc="Generating datasets"):
         env.launch()
         env.reset(humanoid_qpos=env.sim.humanoid_robot_cfg.joint_init_qpos)
         humanoid_init_qpos = env.sim.humanoid_robot_cfg.joint_init_qpos[:7]

@@ -106,6 +106,8 @@ class PoseDataset(Dataset):
             )
 
             pc_mask = get_workspace_mask(full_pc_world)
+            print("Point cloud mask:", pc_mask.sum())
+            input()
             sel_pc_idx = np.random.randint(0, np.sum(pc_mask), self.config.point_num)
 
             pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
