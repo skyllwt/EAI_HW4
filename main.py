@@ -160,11 +160,43 @@ def plan_grasp(env: WrapperEnv, grasp: Grasp, grasp_config, *args, **kwargs) -> 
     reach_steps = grasp_config['reach_steps']
     lift_steps = grasp_config['lift_steps']
     delta_dist = grasp_config['delta_dist']
-
-    traj_reach = []
-    traj_lift = []
-    succ = False
-    if not succ: return None
+    
+    robot_model = env.humanoid_robot_model
+    robot_cfg = env.humanoid_robot_cfg
+    initial_arm_joints = robot_cfg.joint_init_qpos[robot_cfg.joint_arm_indices]
+    
+    target_grasp_trans, target_grasp_rot = grasp.trans, grasp.rot
+    success_grasp, q_grasp_target = robot_model.ik(
+        trans=target_grasp_trans, rot=target_grasp_rot,
+        init_qpos=initial_arm_joints,
+    )
+    if not success_grasp:
+        print(f"IK failed for target grasp pose. T={target_grasp_trans.tolist()}")
+        return None
+    traj_reach = plan_move_qpos(
+        begin_qpos=initial_arm_joints,
+        end_qpos=q_grasp_target,
+        steps=reach_steps
+    )
+    traj_reach = np.vstack([initial_arm_joints[None, :], traj_reach])
+    
+    lift_offset_base = np.array([0, 0, delta_dist])
+    target_lift_trans = target_grasp_trans + lift_offset_base
+    target_lift_rot = target_grasp_rot
+    success_lift, q_lift_target = robot_model.ik(
+        trans=target_lift_trans,
+        rot=target_lift_rot,
+        init_qpos=q_grasp_target,
+    )
+    if not success_lift:
+        print(f"IK failed for lift pose. T={target_lift_trans.tolist()}")
+        return None
+    traj_lift = plan_move_qpos(
+        begin_qpos=q_grasp_target,
+        end_qpos=q_lift_target,
+        steps=lift_steps
+    )
+    traj_lift = np.vstack([q_grasp_target[None, :], traj_lift])
 
     return [np.array(traj_reach), np.array(traj_lift)]
 
@@ -203,7 +235,7 @@ def execute_plan(env: WrapperEnv, plan):
 
 TESTING = True
 DISABLE_GRASP = False
-DISABLE_MOVE = False
+DISABLE_MOVE = True
 
 
 def rotation_matrix_to_euler_angles(R):
@@ -424,6 +456,8 @@ def main():
                 
 
     # --------------------------------------step 2: detect driller pose------------------------------------------------------
+
+    '''
     if not DISABLE_GRASP:
         obs_wrist = env.get_obs(camera_id=1) # wrist camera
         rgb, depth, camera_pose = obs_wrist.rgb, obs_wrist.depth, obs_wrist.camera_pose
@@ -431,7 +465,8 @@ def main():
         driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose)
         # metric judgement
         Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
-
+    '''
+    driller_pose = env.get_driller_pose()
 
     # --------------------------------------step 3: plan grasp and lift------------------------------------------------------
     if not DISABLE_GRASP:
@@ -441,9 +476,9 @@ def main():
         grasps2_n = Grasp(grasps[2].trans, grasps[2].rot @ np.diag([-1,-1,1]), grasps[2].width)
         valid_grasps = [grasps[0], grasps0_n, grasps[2], grasps2_n] # we have provided some grasps, you can choose to use them or yours
         grasp_config = dict( 
-            reach_steps=0,
-            lift_steps=0,
-            delta_dist=0, 
+            reach_steps=50,
+            lift_steps=30,
+            delta_dist=0.05, 
         ) # the grasping design in assignment 2, you can choose to use it or design yours
 
         for obj_frame_grasp in valid_grasps:
@@ -462,7 +497,7 @@ def main():
             return
         reach_plan, lift_plan = grasp_plan
 
-        pregrasp_plan = plan_move_qpos(env, observing_qpos, reach_plan[0], steps=50) # pregrasp, change if you want
+        pregrasp_plan = plan_move_qpos(observing_qpos, reach_plan[0], steps=50) # pregrasp, change if you want
         execute_plan(env, pregrasp_plan)
         open_gripper(env)
         execute_plan(env, reach_plan)
