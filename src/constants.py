@@ -12,15 +12,15 @@ OBJ_RAND_SCALE = 0.05
 # clip the point cloud to a box
 PC_MIN = np.array(
     [
-        OBJ_INIT_TRANS[0] - OBJ_RAND_RANGE / 2,
-        OBJ_INIT_TRANS[1] - OBJ_RAND_RANGE / 2,
-        0.505,
+        0.2,
+        0,
+        0.735,
     ]
 )
 PC_MAX = np.array(
     [
-        OBJ_INIT_TRANS[0] + OBJ_RAND_RANGE / 2,
-        OBJ_INIT_TRANS[1] + OBJ_RAND_RANGE / 2,
-        0.65,
+        1,
+        0.47,
+        0.9,
     ]
 )

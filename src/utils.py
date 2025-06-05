@@ -115,3 +115,53 @@ def rot_dist(r1: np.ndarray, r2: np.ndarray) -> float:
     """
     return np.arccos(np.clip((np.trace(r1 @ r2.T) - 1) / 2, -1, 1))
 
+def get_workspace_mask(pc: np.ndarray) -> np.ndarray:
+    """Get the mask of the point cloud in the workspace."""
+    pc_mask = (
+        (pc[:, 0] > PC_MIN[0])
+        & (pc[:, 0] < PC_MAX[0])
+        & (pc[:, 1] > PC_MIN[1])
+        & (pc[:, 1] < PC_MAX[1])
+        & (pc[:, 2] > PC_MIN[2])
+        & (pc[:, 2] < PC_MAX[2])
+    )
+    return pc_mask
+
+def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
+    """
+    Convert depth image into point cloud using intrinsics
+
+    All points with depth=0 are filtered out
+
+    Parameters
+    ----------
+    depth: np.ndarray
+        Depth image, shape (H, W)
+    intrinsics: np.ndarray
+        Intrinsics matrix with shape (3, 3)
+
+    Returns
+    -------
+    np.ndarray
+        Point cloud with shape (N, 3)
+    """
+    # Get image dimensions
+    height, width = depth.shape
+    # Create meshgrid for pixel coordinates
+    v, u = np.meshgrid(range(height), range(width), indexing="ij")
+    # Flatten the arrays
+    u = u.flatten()
+    v = v.flatten()
+    depth_flat = depth.flatten()
+    # Filter out invalid depth values
+    valid = depth_flat > 0
+    u = u[valid]
+    v = v[valid]
+    depth_flat = depth_flat[valid]
+    # Create homogeneous pixel coordinates
+    pixels = np.stack([u, v, np.ones_like(u)], axis=0)
+    # Convert pixel coordinates to camera coordinates
+    rays = np.linalg.inv(intrinsics) @ pixels
+    # Scale rays by depth
+    points = rays * depth_flat
+    return points.T
