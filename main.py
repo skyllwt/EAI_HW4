@@ -5,23 +5,28 @@ import cv2
 from pyapriltags import Detector
 
 from src.type import Grasp
-from src.utils import to_pose
+from src.utils import to_pose, get_pc, get_workspace_mask
 from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
 from src.sim.wrapper_env import get_grasps
 from src.test.load_test import load_test_data
+import src.pose_detection.pose_detector as pose_detector
 
 
-
-def detect_driller_pose(img, depth, camera_matrix, camera_pose, *args, **kwargs):
+def detect_driller_pose(img, depth, camera_matrix, camera_pose):
     """
     Detects the pose of driller, you can include your policy in args
     """
-    # implement the detection logic here
-    # 
-    pose = np.eye(4)
+    full_pc_camera = get_pc(depth, camera_matrix)
+    full_pc_world = (
+        np.einsum("ab,nb->na", camera_pose[:3, :3], full_pc_camera)
+        + camera_pose[:3, 3]
+    )
+    pc_mask = get_workspace_mask(full_pc_world)
+    sel_pc_idx = np.random.randint(0, np.sum(pc_mask), 1024)
+    pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
+    rel_pose = pose_detector.detect_pose(pc_camera)
+    pose = camera_pose @ rel_pose
     return pose
-
-
 
 def detect_marker_pose(
         detector: Detector, 
@@ -457,7 +462,7 @@ def main():
 
     # --------------------------------------step 2: detect driller pose------------------------------------------------------
 
-    '''
+    
     if not DISABLE_GRASP:
         obs_wrist = env.get_obs(camera_id=1) # wrist camera
         rgb, depth, camera_pose = obs_wrist.rgb, obs_wrist.depth, obs_wrist.camera_pose
@@ -465,8 +470,8 @@ def main():
         driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose)
         # metric judgement
         Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
-    '''
-    driller_pose = env.get_driller_pose()
+    
+    # driller_pose = env.get_driller_pose()
 
     # --------------------------------------step 3: plan grasp and lift------------------------------------------------------
     if not DISABLE_GRASP:

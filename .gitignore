@@ -1,3 +1,6 @@
 **/__pycache__/
 *.pyc
 data/
+exps/
+wandb/
+MUJOCO_LOG.TXT
