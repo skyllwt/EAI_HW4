@@ -67,7 +67,8 @@ def main():
 
         env.step_env(humanoid_head_qpos=head_init_qpos)
         
-        observing_qpos = humanoid_init_qpos + np.random.uniform(low=-0.03, high=0.03, size=7)
+        observing_qpos = humanoid_init_qpos + np.array([0.0,0,0,0,0,-0.2,0.2])
+        # 为了保证能看到物体，调整qpos
         init_plan = plan_move_qpos(humanoid_init_qpos, observing_qpos, steps=20)
         execute_plan(env, init_plan)
 

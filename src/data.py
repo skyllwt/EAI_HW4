@@ -10,6 +10,50 @@ from .constants import DEPTH_IMG_SCALE, TABLE_HEIGHT, PC_MAX, PC_MIN, OBJ_INIT_T
 from .utils import get_pc, get_workspace_mask
 from .vis import Vis
 from .robot.cfg import get_robot_cfg
+import plotly.graph_objects as go
+import plotly.io as pio
+pio.renderers.default = "browser"
+
+def random_sampling(points: np.ndarray, M: int) -> np.ndarray:
+    N = points.shape[0]
+    if M >= N:
+        return points.copy()
+    # np.random.choice 默认是不放回抽样，需要指定 replace=False
+    indices = np.random.choice(N, size=M, replace=False)
+    return points[indices]
+
+def visualize_pc(points: np.ndarray):
+    # points = points[get_workspace_mask(points)]
+    points = random_sampling(points, 50000)
+    print(points[:, 0].mean(), points[:, 1].mean(), points[:, 2].mean())
+    scatter = go.Scatter3d(
+        x=points[:, 0],
+        y=points[:, 1],
+        z=points[:, 2],
+        mode='markers',
+        # 点大小、透明度可以自己调
+        marker=dict(
+            size=1,
+            opacity=0.8,
+            color=points[:, 2],  # 根据 z 值着色
+            colorscale='Viridis',
+        )
+    )
+
+    layout = go.Layout(
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        ),
+        width=800,
+        height=600,
+        title='Plotly 3D 点云示例'
+    )
+
+    fig = go.Figure(data=[scatter], layout=layout)
+    fig.show()
+
 
 
 class PoseDataset(Dataset):
@@ -96,7 +140,7 @@ class PoseDataset(Dataset):
 
             full_pc_camera = get_pc(
                 depth_array, self.robot_cfg.camera_cfg[1].intrinsics
-            ) * np.array([-1, -1, 1])
+            )
             full_pc_world = (
                 np.einsum("ab,nb->na", camera_pose[:3, :3], full_pc_camera)
                 + camera_pose[:3, 3]
@@ -106,8 +150,6 @@ class PoseDataset(Dataset):
             )
 
             pc_mask = get_workspace_mask(full_pc_world)
-            print("Point cloud mask:", pc_mask.sum())
-            input()
             sel_pc_idx = np.random.randint(0, np.sum(pc_mask), self.config.point_num)
 
             pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
