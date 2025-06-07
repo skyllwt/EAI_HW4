@@ -52,7 +52,7 @@ class WrapperEnv:
         self.obj_name = config.obj_name
 
 
-    def set_table_obj_config(self, table_pose: np.ndarray, table_size: np.ndarray, obj_pose: np.ndarray):
+    def set_table_obj_config(self, table_pose: np.ndarray, table_size: np.ndarray, obj_pose):
         """Set the table pose and size and object pose."""
         self.config.table_pose = table_pose
         self.config.table_size = table_size
@@ -98,7 +98,7 @@ class WrapperEnv:
             obj_pose = self.config.obj_pose
         else:
             obj_init_trans = np.array([0.5, 0.3, 0.82])
-            obj_init_trans[:2] += np.random.uniform(-0.02, 0.02, 2) * 0
+            obj_init_trans[:2] += np.random.uniform(-0.02, 0.02, 2)
             obj_pose = to_pose(obj_init_trans, rand_rot_mat())
         
         self.obj = get_obj(self.obj_name, obj_pose)

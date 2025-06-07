@@ -5,10 +5,12 @@ import cv2
 from tqdm import tqdm
 from pyapriltags import Detector
 
+from src.constants import OBSERVING_QPOS_DELTA
 from src.type import Grasp
 from src.utils import to_pose
 from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
 from src.sim.wrapper_env import get_grasps
+from src.test.load_test import load_test_data
 
 
 def plan_move_qpos(begin_qpos, end_qpos, steps=50) -> np.ndarray:
@@ -59,21 +61,34 @@ def main():
 
 
     for i in tqdm(range(num), desc="Generating datasets"):
-        env.launch()
-        env.reset(humanoid_qpos=env.sim.humanoid_robot_cfg.joint_init_qpos)
-        humanoid_init_qpos = env.sim.humanoid_robot_cfg.joint_init_qpos[:7]
-        
-        head_init_qpos = np.array([-0.05,0.35]) # you can adjust the head init qpos to find the driller
+        while True:
+            id = np.random.randint(0, 3)
+            data_dict = load_test_data(id)
+            env.set_table_obj_config(
+                table_pose=data_dict['table_pose'],
+                table_size=data_dict['table_size'],
+                obj_pose=None
+            )
+            env.launch()
+            env.reset(humanoid_qpos=env.sim.humanoid_robot_cfg.joint_init_qpos)
+            humanoid_init_qpos = env.sim.humanoid_robot_cfg.joint_init_qpos[:7]
+            
+            head_init_qpos = np.array([-0.05,0.35]) # you can adjust the head init qpos to find the driller
 
-        env.step_env(humanoid_head_qpos=head_init_qpos)
+            env.step_env(humanoid_head_qpos=head_init_qpos)
+            if env.get_driller_pose()[2,3] > 0.6:
+                break
         
-        observing_qpos = humanoid_init_qpos + np.array([0.0,0,0,0,0,-0.2,0.2])
+        print(env.config.table_pose)
+        
+        observing_qpos = humanoid_init_qpos + OBSERVING_QPOS_DELTA
         # 为了保证能看到物体，调整qpos
         init_plan = plan_move_qpos(humanoid_init_qpos, observing_qpos, steps=20)
         execute_plan(env, init_plan)
 
-        obs_wrist = env.get_obs(camera_id=1)  # wrist camera
+        obs_wrist = env.get_obs(camera_id=1)
         env.save_obs(obs_wrist)
+    
         env.close()
 
     
