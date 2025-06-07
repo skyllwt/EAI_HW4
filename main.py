@@ -14,7 +14,7 @@ from src.constants import OBSERVING_QPOS_DELTA
 from visualize import plot_pointclouds_with_poses, random_sampling
 
 
-def detect_driller_pose(img, depth, camera_matrix, camera_pose, gt):
+def detect_driller_pose(img, depth, camera_matrix, camera_pose):
     """
     Detects the pose of driller, you can include your policy in args
     """
@@ -28,12 +28,12 @@ def detect_driller_pose(img, depth, camera_matrix, camera_pose, gt):
     pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
     rel_pose = pose_detector.detect_pose(pc_camera)
     pose = camera_pose @ rel_pose
-    plot_pointclouds_with_poses(
-        random_sampling(full_pc_world, 50000), 
-        full_pc_world[pc_mask][sel_pc_idx], 
-        gt, 
-        pose
-    )
+    # plot_pointclouds_with_poses(
+    #     random_sampling(full_pc_world, 50000), 
+    #     full_pc_world[pc_mask][sel_pc_idx], 
+    #     gt, 
+    #     pose
+    # )
     return pose
 
 def detect_marker_pose(
@@ -285,7 +285,7 @@ def execute_plan(env: WrapperEnv, plan):
         )
 
 
-TESTING = True
+TESTING = False
 DISABLE_GRASP = False
 DISABLE_MOVE = True
 
@@ -512,10 +512,10 @@ def main():
     
     if not DISABLE_GRASP:
         obs_wrist = env.get_obs(camera_id=1) # wrist camera
-        env.debug_save_obs(obs_wrist, "tmp_data")
+        # env.debug_save_obs(obs_wrist, "tmp_data")
         rgb, depth, camera_pose = obs_wrist.rgb, obs_wrist.depth, obs_wrist.camera_pose
         wrist_camera_matrix = env.sim.humanoid_robot_cfg.camera_cfg[1].intrinsics
-        driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose, env.get_driller_pose())
+        driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose)
         # metric judgement
         Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
     
