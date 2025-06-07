@@ -443,7 +443,7 @@ def main():
                     trans_container_world = estimated_rot_matrix @ np.array([0, 0.31, 0.02]) + estimated_quad_trans
                     rot_container_world = estimated_rot_matrix # 容器的旋转就是四足机器人的旋转
 
-            
+            final_box_pose = pose_container_world.copy()  # 保存最终盒子位姿
             
             current_yaw_for_policy = rotation_matrix_to_euler_angles(rot_container_world)[2]
             quad_command = forward_quad_policy(
@@ -562,14 +562,58 @@ def main():
 
 
     # --------------------------------------step 4: plan to move and drop----------------------------------------------------
+    # if not DISABLE_GRASP and not DISABLE_MOVE:
+    #     # implement your moving plan
+    #     #
+    #     move_plan = plan_move(
+    #         env=env,
+    #     ) 
+    #     execute_plan(env, move_plan)
+    #     open_gripper(env)
+    
     if not DISABLE_GRASP and not DISABLE_MOVE:
-        # implement your moving plan
-        #
-        move_plan = plan_move(
-            env=env,
-        ) 
-        execute_plan(env, move_plan)
-        open_gripper(env)
+        # 1. 获取当前机械臂关节位置
+        current_arm_qpos = env.get_humanoid_arm_qpos()
+        
+        # 2. 计算投放位置（盒子正上方0.1米处）
+        drop_height = 0.1  # 投放高度
+        target_drop_trans = final_box_pose[:3, 3] + np.array([0, 0, drop_height])
+        
+        # 保持当前夹爪朝向（竖直向下）
+        current_gripper_pose = env.humanoid_robot_model.forward_kinematics(current_arm_qpos)
+        target_drop_rot = current_gripper_pose[:3, :3]  # 保持当前朝向
+        
+        # 3. 求解逆运动学
+        success, target_arm_qpos = env.humanoid_robot_model.ik(
+            trans=target_drop_trans,
+            rot=target_drop_rot,
+            init_qpos=current_arm_qpos
+        )
+        
+        if not success:
+            print("Warning: IK failed for drop position. Using alternative approach.")
+            # 备选方案：只移动位置，保持关节角度不变（可能不够精确但能工作）
+            target_arm_qpos = current_arm_qpos
+        
+        # 4. 规划轨迹
+        drop_steps = 50  # 轨迹步数
+        drop_plan = plan_move_qpos(current_arm_qpos, target_arm_qpos, steps=drop_steps)
+        
+        # 5. 执行投放
+        execute_plan(env, drop_plan)  # 移动到投放位置
+        open_gripper(env, steps=10)   # 打开夹爪
+        
+        # 6. 机械臂抬升避免碰撞
+        lift_offset = np.array([0, 0, 0.1])  # 上移10cm
+        lift_trans = target_drop_trans + lift_offset
+        success, lift_qpos = env.humanoid_robot_model.ik(
+            trans=lift_trans,
+            rot=target_drop_rot,
+            init_qpos=target_arm_qpos
+        )
+        if success:
+            lift_plan = plan_move_qpos(target_arm_qpos, lift_qpos, steps=20)
+            execute_plan(env, lift_plan)
 
 
     # --------------------------------------step 5: move quadruped backward to initial position------------------------------
