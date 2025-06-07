@@ -19,9 +19,9 @@ class Config:
     """the object we want to grasp"""
     checkpoint: str = None
     """if not None, then we will continue training from this checkpoint"""
-    max_iter: int = 10000
+    max_iter: int = 20000
     """the maximum number of iterations"""
-    batch_size: int = 32
+    batch_size: int = 64
     """the batch size for training"""
     learning_rate: float = 1e-3
     """maximum (and initial) learning rates"""

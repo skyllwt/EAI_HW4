@@ -20,7 +20,9 @@ PC_MIN = np.array(
 PC_MAX = np.array(
     [
         1,
-        0.47,
+        0.8,
         0.9,
     ]
 )
+
+OBSERVING_QPOS_DELTA = np.array([0.01,0,0.25,0,0,0,0.15])
