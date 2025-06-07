@@ -156,7 +156,7 @@ def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
     return points.T
 
 
-def calculate_table_height(pc, z_min=0.67, z_max=0.74):
+def calculate_table_height(pc, z_min=0.65, z_max=0.75):
     # 筛选出 z 值在范围内的点
     filtered_points = pc[
         (pc[:, 0] > PC_MIN[0])

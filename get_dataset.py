@@ -62,11 +62,21 @@ def main():
 
     for i in tqdm(range(num), desc="Generating datasets"):
         while True:
-            id = np.random.randint(0, 3)
-            data_dict = load_test_data(id)
+            table_trans = np.array([
+                np.random.uniform(0.55, 0.61),  # x 在 [0.55, 0.61] 随机
+                np.random.uniform(0.38, 0.47),  # y 在 [0.38, 0.47] 随机
+                np.random.uniform(0.67, 0.74)   # z 在 [0.67, 0.74] 随机
+            ])
+            size_option1 = np.array([0.68, 0.36, 0.02])
+            size_option2 = np.array([0.72, 0.42, 0.02])
+            table_size = size_option1 if np.random.rand() < 0.75 else size_option2
+            # print(table_trans, table_size)
+            table_pose = np.eye(4)
+            table_pose[:3, 3] = table_trans
+
             env.set_table_obj_config(
-                table_pose=data_dict['table_pose'],
-                table_size=data_dict['table_size'],
+                table_pose=table_pose,
+                table_size=table_size,
                 obj_pose=None
             )
             env.launch()
@@ -79,7 +89,7 @@ def main():
             if env.get_driller_pose()[2,3] > 0.6:
                 break
         
-        print(env.config.table_pose)
+        # print(env.config.table_pose)
         
         observing_qpos = humanoid_init_qpos + OBSERVING_QPOS_DELTA
         # 为了保证能看到物体，调整qpos

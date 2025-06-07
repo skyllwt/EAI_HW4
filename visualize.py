@@ -88,7 +88,7 @@ def random_sampling(points: np.ndarray, M: int) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    fdir = "data/val/20250607_111925/"
+    fdir = "data/val/20250607_114301/"
 
     obj_pose = np.load(os.path.join(fdir, "object_pose.npy"))
     
