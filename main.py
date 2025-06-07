@@ -268,6 +268,7 @@ def close_gripper(env: WrapperEnv, steps = 10):
     for _ in range(steps):
         env.step_env(gripper_open=0)
 def plan_move_qpos(begin_qpos, end_qpos, steps=50) -> np.ndarray:
+    print("delta_qpos:", end_qpos - begin_qpos)
     delta_qpos = (end_qpos - begin_qpos) / steps
     cur_qpos = begin_qpos.copy()
     traj = []
@@ -283,6 +284,10 @@ def execute_plan(env: WrapperEnv, plan):
         env.step_env(
             humanoid_action=plan[step],
         )
+        # env.debug_save_obs(
+        #     env.get_obs(camera_id=0), 
+        #     f'data/step_{step:04d}'
+        # )
 
 
 TESTING = False
@@ -403,7 +408,7 @@ def main():
 
                 # 这里可以保存图像
                 # if step % 20 == 0:
-                #     env.debug_save_obs(obs_head, f'data/head_{step:04d}') 
+                    # env.debug_save_obs(obs_head, f'data/head_{step:04d}') 
 
                 trans_marker_world, rot_marker_world = detect_marker_pose(
                     detector, 
@@ -603,17 +608,17 @@ def main():
         execute_plan(env, drop_plan)  # 移动到投放位置
         open_gripper(env, steps=10)   # 打开夹爪
         
-        # 6. 机械臂抬升避免碰撞
-        lift_offset = np.array([0, 0, 0.1])  # 上移10cm
-        lift_trans = target_drop_trans + lift_offset
-        success, lift_qpos = env.humanoid_robot_model.ik(
-            trans=lift_trans,
-            rot=target_drop_rot,
-            init_qpos=target_arm_qpos
-        )
-        if success:
-            lift_plan = plan_move_qpos(target_arm_qpos, lift_qpos, steps=20)
-            execute_plan(env, lift_plan)
+        # # 6. 机械臂抬升避免碰撞
+        # lift_offset = np.array([0, 0, 0.1])  # 上移10cm
+        # lift_trans = target_drop_trans + lift_offset
+        # success, lift_qpos = env.humanoid_robot_model.ik(
+        #     trans=lift_trans,
+        #     rot=target_drop_rot,
+        #     init_qpos=target_arm_qpos
+        # )
+        # if success:
+        #     lift_plan = plan_move_qpos(target_arm_qpos, lift_qpos, steps=20)
+        #     execute_plan(env, lift_plan)
 
 
     # --------------------------------------step 5: move quadruped backward to initial position------------------------------
