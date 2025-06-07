@@ -165,7 +165,18 @@ def backward_quad_policy(
 
     return np.array([vx, vy, wz], dtype=np.float32)
 
-
+def calculate_trajectory_length(traj):
+    """计算轨迹在关节空间中的总长度"""
+    if len(traj) < 2:
+        return 0.0
+    
+    total_length = 0.0
+    for i in range(1, len(traj)):
+        # 计算相邻两个关节配置之间的欧几里得距离
+        step_length = np.linalg.norm(traj[i] - traj[i-1])
+        total_length += step_length
+    
+    return total_length
 
 def plan_grasp(env: WrapperEnv, grasp: Grasp, grasp_config, *args, **kwargs) -> Optional[List[np.ndarray]]:
     """Try to plan a grasp trajectory for the given grasp. The trajectory is a list of joint positions. Return None if the trajectory is not valid."""
@@ -173,45 +184,73 @@ def plan_grasp(env: WrapperEnv, grasp: Grasp, grasp_config, *args, **kwargs) -> 
     reach_steps = grasp_config['reach_steps']
     lift_steps = grasp_config['lift_steps']
     delta_dist = grasp_config['delta_dist']
+    max_traj_length = grasp_config['max_traj_length']
+    max_ik_attempts = grasp_config['max_ik_attempts']
     
     robot_model = env.humanoid_robot_model
     robot_cfg = env.humanoid_robot_cfg
     initial_arm_joints = robot_cfg.joint_init_qpos[robot_cfg.joint_arm_indices]
     
     target_grasp_trans, target_grasp_rot = grasp.trans, grasp.rot
-    success_grasp, q_grasp_target = robot_model.ik(
-        trans=target_grasp_trans, rot=target_grasp_rot,
-        init_qpos=initial_arm_joints,
-    )
-    if not success_grasp:
-        print(f"IK failed for target grasp pose. T={target_grasp_trans.tolist()}")
-        return None
-    traj_reach = plan_move_qpos(
-        begin_qpos=initial_arm_joints,
-        end_qpos=q_grasp_target,
-        steps=reach_steps
-    )
-    traj_reach = np.vstack([initial_arm_joints[None, :], traj_reach])
     
-    lift_offset_base = np.array([0, 0, delta_dist])
-    target_lift_trans = target_grasp_trans + lift_offset_base
-    target_lift_rot = target_grasp_rot
-    success_lift, q_lift_target = robot_model.ik(
-        trans=target_lift_trans,
-        rot=target_lift_rot,
-        init_qpos=q_grasp_target,
-    )
-    if not success_lift:
-        print(f"IK failed for lift pose. T={target_lift_trans.tolist()}")
-        return None
-    traj_lift = plan_move_qpos(
-        begin_qpos=q_grasp_target,
-        end_qpos=q_lift_target,
-        steps=lift_steps
-    )
-    traj_lift = np.vstack([q_grasp_target[None, :], traj_lift])
-
-    return [np.array(traj_reach), np.array(traj_lift)]
+    for attempt in range(max_ik_attempts):
+        # 每次尝试时稍微扰动初始配置，以获得不同的IK解
+        if attempt == 0:
+            init_qpos_for_ik = initial_arm_joints
+        else:
+            # 添加小的随机扰动
+            noise_scale = 0.1 * attempt  # 随着尝试次数增加扰动
+            noise = np.random.uniform(-noise_scale, noise_scale, initial_arm_joints.shape)
+            init_qpos_for_ik = initial_arm_joints + noise
+        
+        success_grasp, q_grasp_target = robot_model.ik(
+            trans=target_grasp_trans, rot=target_grasp_rot,
+            init_qpos=init_qpos_for_ik,
+        )
+        
+        if not success_grasp:
+            continue  # 如果IK失败，尝试下一个初始配置
+        
+        # 规划轨迹
+        traj_reach = plan_move_qpos(
+            begin_qpos=initial_arm_joints,
+            end_qpos=q_grasp_target,
+            steps=reach_steps
+        )
+        traj_reach = np.vstack([initial_arm_joints[None, :], traj_reach])
+        
+        # 检查轨迹长度
+        reach_length = calculate_trajectory_length(traj_reach)
+        print(f"Attempt {attempt+1}: Reach trajectory length: {reach_length:.3f} (max: {max_traj_length})")
+        
+        if reach_length <= max_traj_length:
+            # 找到了满足长度要求的解，继续规划lift轨迹
+            lift_offset_base = np.array([0, 0, delta_dist])
+            target_lift_trans = target_grasp_trans + lift_offset_base
+            target_lift_rot = target_grasp_rot
+            success_lift, q_lift_target = robot_model.ik(
+                trans=target_lift_trans,
+                rot=target_lift_rot,
+                init_qpos=q_grasp_target,
+            )
+            if not success_lift:
+                print(f"Attempt {attempt+1}: IK failed for lift pose.")
+                continue  # lift IK失败，尝试下一个
+            
+            traj_lift = plan_move_qpos(
+                begin_qpos=q_grasp_target,
+                end_qpos=q_lift_target,
+                steps=lift_steps
+            )
+            traj_lift = np.vstack([q_grasp_target[None, :], traj_lift])
+            
+            print(f"Successfully found valid grasp plan on attempt {attempt+1}")
+            return [np.array(traj_reach), np.array(traj_lift)]
+        else:
+            print(f"Attempt {attempt+1}: Trajectory too long ({reach_length:.3f} > {max_traj_length}), trying next IK solution")
+    
+    print(f"Failed to find valid grasp plan after {max_ik_attempts} attempts")
+    return None
 
 def plan_move(env: WrapperEnv, begin_qpos, begin_trans, begin_rot, end_trans, end_rot, steps = 50, *args, **kwargs):
     """Plan a trajectory moving the driller from table to dropping position"""
@@ -246,7 +285,7 @@ def execute_plan(env: WrapperEnv, plan):
         )
 
 
-TESTING = True
+TESTING = False
 DISABLE_GRASP = False
 DISABLE_MOVE = True
 
@@ -470,7 +509,7 @@ def main():
 
     # --------------------------------------step 2: detect driller pose------------------------------------------------------
 
-    
+    '''
     if not DISABLE_GRASP:
         obs_wrist = env.get_obs(camera_id=1) # wrist camera
         env.debug_save_obs(obs_wrist, "tmp_data")
@@ -479,6 +518,7 @@ def main():
         driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose, env.get_driller_pose())
         # metric judgement
         Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
+    '''
     
     driller_pose = env.get_driller_pose()
 
@@ -493,6 +533,8 @@ def main():
             reach_steps=50,
             lift_steps=30,
             delta_dist=0.05, 
+            max_traj_length=2.5,
+            max_ik_attempts=10,
         ) # the grasping design in assignment 2, you can choose to use it or design yours
 
         for obj_frame_grasp in valid_grasps:
