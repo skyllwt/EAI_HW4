@@ -138,22 +138,27 @@ class PoseDataset(Dataset):
                 / DEPTH_IMG_SCALE
             )
 
-            full_pc_camera = get_pc(
-                depth_array, self.robot_cfg.camera_cfg[1].intrinsics
-            )
-            full_pc_world = (
-                np.einsum("ab,nb->na", camera_pose[:3, :3], full_pc_camera)
-                + camera_pose[:3, 3]
-            )
-            full_coord = np.einsum(
-                "ba,nb->na", obj_pose[:3, :3], full_pc_world - obj_pose[:3, 3]
-            )
+            if os.path.exists(os.path.join(fdir, "pc_cam.npy")):
+                pc_camera = np.load(os.path.join(fdir, "pc_cam.npy"))
+                coord = np.load(os.path.join(fdir, "coord.npy"))
+            else:
+                full_pc_camera = get_pc(
+                    depth_array, self.robot_cfg.camera_cfg[1].intrinsics
+                )
+                full_pc_world = (
+                    np.einsum("ab,nb->na", camera_pose[:3, :3], full_pc_camera)
+                    + camera_pose[:3, 3]
+                )
+                full_coord = np.einsum(
+                    "ba,nb->na", obj_pose[:3, :3], full_pc_world - obj_pose[:3, 3]
+                )
+                pc_mask = get_workspace_mask(full_pc_world)
+                sel_pc_idx = np.random.randint(0, np.sum(pc_mask), self.config.point_num)
+                pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
+                coord = full_coord[pc_mask][sel_pc_idx]
+                np.save(os.path.join(fdir, "pc_cam.npy"), pc_camera)
+                np.save(os.path.join(fdir, "coord.npy"), coord)
 
-            pc_mask = get_workspace_mask(full_pc_world)
-            sel_pc_idx = np.random.randint(0, np.sum(pc_mask), self.config.point_num)
-
-            pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
-            coord = full_coord[pc_mask][sel_pc_idx]
             rel_obj_pose = np.linalg.inv(camera_pose) @ obj_pose
 
             return dict(
