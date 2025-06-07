@@ -233,7 +233,7 @@ class WrapperEnv:
         """Save the observation to the specified directory."""
         if data_dir is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            data_dir = os.path.join("data", "train", timestamp)
+            data_dir = os.path.join("data", "val", timestamp)
         os.makedirs(data_dir, exist_ok=True)
         # clear the directory
         for f in os.listdir(data_dir):

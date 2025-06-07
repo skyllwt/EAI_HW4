@@ -126,6 +126,10 @@ class PoseDataset(Dataset):
             fdir = os.path.join(self.data_root, f)
 
             obj_pose = np.load(os.path.join(fdir, "object_pose.npy"))
+            
+            if obj_pose[2,3] < 0.6:
+                return self.__getitem__()
+
             if not np.linalg.norm(obj_pose[:2, 3] - OBJ_INIT_TRANS[:2]) < 0.5:
                 # some times the object will be out of the workspace
                 # so we need to skip this sample

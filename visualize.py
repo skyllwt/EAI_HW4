@@ -76,6 +76,8 @@ def plot_pointclouds_with_poses(
         ),
         title='三维点云及 Ground Truth vs Predicted 位姿'
     )
+    fig.write_html("visualization.html")
+    input("Press Enter to open the visualization in your browser...")
     fig.show()
 
 def random_sampling(points: np.ndarray, M: int) -> np.ndarray:
@@ -88,7 +90,7 @@ def random_sampling(points: np.ndarray, M: int) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    fdir = "data/val/20250607_114301/"
+    fdir = "data/train/20250607_193946/"
 
     obj_pose = np.load(os.path.join(fdir, "object_pose.npy"))
     
@@ -114,17 +116,15 @@ if __name__ == "__main__":
     rel_obj_pose = np.linalg.inv(camera_pose) @ obj_pose
 
     pc_mask = get_workspace_mask(full_pc_world)
-    sel_pc_idx = np.random.randint(0, np.sum(pc_mask), 1024)
+    # sel_pc_idx = np.random.randint(0, np.sum(pc_mask), 1024)
 
-    pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
-    pc_world = full_pc_world[pc_mask][sel_pc_idx]
-    coord = full_coord[pc_mask][sel_pc_idx]
+    # pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
+    # pc_world = full_pc_world[pc_mask][sel_pc_idx]
+    # coord = full_coord[pc_mask][sel_pc_idx]
 
-    plot_pointclouds_with_poses(random_sampling(full_pc_world, 50000), pc_world, obj_pose, camera_pose @ rel_obj_pose, axis_length=0.1)
+    plot_pointclouds_with_poses(random_sampling(full_pc_world, 50000), np.array([[0,0,0]]), obj_pose, camera_pose @ rel_obj_pose, axis_length=0.1)
 
     
-    pc=pc_camera.astype(np.float32)
-    coord=coord.astype(np.float32)
     trans=rel_obj_pose[:3, 3].astype(np.float32)
     rot=rel_obj_pose[:3, :3].astype(np.float32)
     camera_pose=camera_pose.astype(np.float32)
