@@ -76,6 +76,7 @@ class PoseDataset(Dataset):
         self.robot_cfg = get_robot_cfg(config.robot)
         self.data_root = os.path.join("data", mode)
         self.files = sorted(os.listdir(self.data_root))
+        print(self.files.__len__(), "files in", self.data_root)
         self.files = self.files * scale
         random.shuffle(self.files)
 
@@ -125,7 +126,7 @@ class PoseDataset(Dataset):
             fdir = os.path.join(self.data_root, f)
 
             obj_pose = np.load(os.path.join(fdir, "object_pose.npy"))
-            if not np.linalg.norm(obj_pose[:2, 3] - OBJ_INIT_TRANS[:2]) < 0.1:
+            if not np.linalg.norm(obj_pose[:2, 3] - OBJ_INIT_TRANS[:2]) < 0.5:
                 # some times the object will be out of the workspace
                 # so we need to skip this sample
                 # this rarely happens so we don't need to worry about it
@@ -138,9 +139,11 @@ class PoseDataset(Dataset):
                 / DEPTH_IMG_SCALE
             )
 
-            if os.path.exists(os.path.join(fdir, "pc_cam.npy")):
-                pc_camera = np.load(os.path.join(fdir, "pc_cam.npy"))
-                coord = np.load(os.path.join(fdir, "coord.npy"))
+            if os.path.exists(os.path.join(fdir, "full_pc_camera.npy")):
+                full_pc_camera = np.load(os.path.join(fdir, "full_pc_camera.npy"))
+                full_pc_world = np.load(os.path.join(fdir, "full_pc_world.npy"))
+                full_coord = np.load(os.path.join(fdir, "full_coord.npy"))
+                
             else:
                 full_pc_camera = get_pc(
                     depth_array, self.robot_cfg.camera_cfg[1].intrinsics
@@ -153,11 +156,18 @@ class PoseDataset(Dataset):
                     "ba,nb->na", obj_pose[:3, :3], full_pc_world - obj_pose[:3, 3]
                 )
                 pc_mask = get_workspace_mask(full_pc_world)
-                sel_pc_idx = np.random.randint(0, np.sum(pc_mask), self.config.point_num)
-                pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
-                coord = full_coord[pc_mask][sel_pc_idx]
-                np.save(os.path.join(fdir, "pc_cam.npy"), pc_camera)
-                np.save(os.path.join(fdir, "coord.npy"), coord)
+
+                np.save(os.path.join(fdir, "full_pc_camera.npy"), full_pc_camera[pc_mask])
+                np.save(os.path.join(fdir, "full_pc_world.npy"), full_pc_world[pc_mask])
+                np.save(os.path.join(fdir, "full_coord.npy"), full_coord[pc_mask])
+
+            sel_pc_idx = np.random.choice(
+                np.arange(full_pc_camera.shape[0]),
+                size=self.config.point_num,
+                replace=False,
+            )
+            pc_camera = full_pc_camera[sel_pc_idx]
+            coord = full_coord[sel_pc_idx]
 
             rel_obj_pose = np.linalg.inv(camera_pose) @ obj_pose
 

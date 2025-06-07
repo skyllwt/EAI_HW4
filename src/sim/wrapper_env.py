@@ -97,7 +97,7 @@ class WrapperEnv:
         if self.config.obj_pose is not None:
             obj_pose = self.config.obj_pose
         else:
-            obj_init_trans = np.array([0.5, 0.3, 0.82])
+            obj_init_trans = np.array([np.random.uniform(0.48, 0.53), np.random.uniform(0.2, 0.45), 0.82])
             obj_init_trans[:2] += np.random.uniform(-0.02, 0.02, 2)
             obj_pose = to_pose(obj_init_trans, rand_rot_mat())
         
@@ -233,7 +233,7 @@ class WrapperEnv:
         """Save the observation to the specified directory."""
         if data_dir is None:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            data_dir = os.path.join("data", "val", timestamp)
+            data_dir = os.path.join("data", "train", timestamp)
         os.makedirs(data_dir, exist_ok=True)
         # clear the directory
         for f in os.listdir(data_dir):

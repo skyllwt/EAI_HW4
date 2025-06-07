@@ -2,7 +2,6 @@ from typing import Tuple, Dict
 import numpy as np
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 from ..config import Config
 from ..vis import Vis
@@ -18,23 +17,35 @@ class EstCoordNet(nn.Module):
         """
         super().__init__()
         self.config = config
-        
-        # PointNet Backbone
-        self.conv1 = nn.Conv1d(3, 64, kernel_size=1)
-        self.conv2 = nn.Conv1d(64, 128, kernel_size=1)
-        self.conv3 = nn.Conv1d(128, 1024, kernel_size=1)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.bn3 = nn.BatchNorm1d(1024)
-        self.maxpool = nn.MaxPool1d(kernel_size=1024)
-
-        self.conv4 = nn.Conv1d(1024 + 64, 512, 1)
-        self.conv5 = nn.Conv1d(512, 256, 1)
-        self.conv6 = nn.Conv1d(256, 128, 1)
-        self.conv7 = nn.Conv1d(128, 3, 1)
-        self.bn4 = nn.BatchNorm1d(512)
-        self.bn5 = nn.BatchNorm1d(256)
-        self.bn6 = nn.BatchNorm1d(128)
+        self.mlp1 = nn.Sequential(
+            nn.Conv1d(3, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+        )
+        self.mlp1_res = nn.Sequential(
+            nn.Conv1d(64, 128, 1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 1024, 1),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(),
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Conv1d(1088, 512, 1),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Conv1d(512, 256, 1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Conv1d(256, 128, 1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 3, 1),
+        )
+        # raise NotImplementedError("You need to implement some modules here")
 
     def forward(
         self, pc: torch.Tensor, coord: torch.Tensor, **kwargs
@@ -56,47 +67,23 @@ class EstCoordNet(nn.Module):
         Dict[str, float]
             A dictionary containing additional metrics you want to log
         """
-        coord_pred = self.est_coord(pc) # (B, N, 3)
-
-        loss = F.mse_loss(coord_pred, coord)
+        # raise NotImplementedError("You need to implement the forward function")
+        
+        pc = pc.transpose(1, 2)
+        pc_after_1 = self.mlp1(pc)
+        pc_after_1_res = self.mlp1_res(pc_after_1)
+        pc_after_1_res = torch.amax(pc_after_1_res, dim=2).unsqueeze(2).expand(-1, -1, pc_after_1.shape[2])
+        pc_full = torch.cat([pc_after_1, pc_after_1_res], dim=1)
+        pred = self.mlp2(pc_full)
+        pred = pred.transpose(1, 2)
+        loss = nn.MSELoss()(pred, coord)
+        
         metric = dict(
             loss=loss,
             # additional metrics you want to log
         )
         return loss, metric
-    
-    def est_coord(self, pc: torch.Tensor) -> torch.Tensor:
-        """
-        Estimate coordinates in the object frame
 
-        Parameters
-        ----------
-        pc : torch.Tensor
-            Point cloud in camera frame, shape \(B, N, 3\)
-
-        Returns
-        -------
-        coord: torch.Tensor
-            Estimated coordinates in the object frame, shape \(B, N, 3\)
-        """
-        
-        x = pc.transpose(1, 2) # (B, 3, N)
-        x = F.relu(self.bn1(self.conv1(x))) # (B, 64, N)
-        point_feat = x # (B, 64, N)
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = self.maxpool(x)
-        global_feat = x.view(x.size(0), -1) # (B, 1024)
-        global_feat = global_feat.unsqueeze(2).expand(-1, -1, point_feat.size(2)) # (B, 1024, N)
-        x = torch.cat([point_feat, global_feat], dim=1) # (B, 1086, N)
-        x = F.relu(self.bn4(self.conv4(x))) # (B, 512, N)
-        x = F.relu(self.bn5(self.conv5(x))) # (B, 256, N)
-        x = F.relu(self.bn6(self.conv6(x))) # (B, 128, N)
-        x = self.conv7(x) # (B, 3, N)
-        x = x.transpose(1, 2) # (B, N, 3)
-        return x
-    
-    @torch.no_grad()
     def est(self, pc: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Estimate translation and rotation in the camera frame
@@ -121,105 +108,84 @@ class EstCoordNet(nn.Module):
 
         The only requirement is that the input and output should be torch tensors on the same device and with the same dtype.
         """
-        B, N, _ = pc.shape
-        dtype, device = pc.dtype, pc.device
-        coord = self.est_coord(pc) # (B, N, 3)
-        use_ransac = True
-
-        if not use_ransac:
-            trans = torch.zeros(B, 3, device=device, dtype=dtype)
-            rot = torch.zeros(B, 3, 3, device=device, dtype=dtype)
-
-            for batch_idx in range(B):
-                P = pc[batch_idx] # (N, 3)
-                Q = coord[batch_idx] # (N, 3)
-                P_mean = torch.mean(P, dim=0) # (3,)
-                Q_mean = torch.mean(Q, dim=0) # (3,)
-                P_centered = P - P_mean # (N, 3)
-                Q_centered = Q - Q_mean # (N, 3)
-
-                H = Q_centered.T @ P_centered # (3, 3)
-                U, _, Vt = torch.linalg.svd(H)
-                det = torch.linalg.det(Vt.T @ U.T)
-                Vt[:, -1] *= det.sign()
-                R = Vt.T @ U.T # (3, 3)
-                rot[batch_idx] = R
-                trans[batch_idx] = P_mean - R @ Q_mean
+        batch_size, num_points, _ = pc.shape
+        device, dtype = pc.device, pc.dtype
+        
+        pc_trans = pc.transpose(1, 2)
+        pc_after_1 = self.mlp1(pc_trans)
+        pc_after_1_res = self.mlp1_res(pc_after_1)
+        pc_after_1_res = torch.amax(pc_after_1_res, dim=2).unsqueeze(2).expand(-1, -1, pc_after_1.shape[2])
+        pc_full = torch.cat([pc_after_1, pc_after_1_res], dim=1)
+        pred_coords = self.mlp2(pc_full).transpose(1, 2)
+        
+        final_rot = torch.eye(3, device=device, dtype=dtype).repeat(batch_size, 1, 1)
+        final_trans = torch.zeros(batch_size, 3, device=device, dtype=dtype)
+        
+        for bidx in range(batch_size):
+            src = pc[bidx].detach().cpu().numpy()
+            dst = pred_coords[bidx].detach().cpu().numpy()
             
-            return trans, rot
+            best_rot = np.eye(3)
+            best_trans = np.zeros(3)
+            max_inliers = 0
+            inlier_mask = None
+            
+            for _ in range(1000):
+                for attempt in range(10):
+                    sample_idx = np.random.choice(num_points, 3, replace=False)
+                    sample_src = src[sample_idx]
+                    sample_dst = dst[sample_idx]
 
-        # parameter for RANSAC
-        iter = 1000
-        threshold = 1e-5
-        sample_num = 3
+                    vec1 = sample_src[1] - sample_src[0]
+                    vec2 = sample_src[2] - sample_src[0]
+                    if np.linalg.norm(np.cross(vec1, vec2)) > 1e-7:
+                        break
+                else:
+                    continue
+                
+                try:
+                    R, t = self._calc_transformation(sample_dst, sample_src)
+                except np.linalg.LinAlgError:
+                    continue
+                
+                error = np.linalg.norm((R @ dst.T).T + t - src, axis=1)
+                curr_inliers = np.sum(error < 0.005)
+                
+                if curr_inliers > max_inliers:
+                    best_rot = R
+                    best_trans = t
+                    max_inliers = curr_inliers
+                    inlier_mask = error < 0.005
+            
+            if max_inliers >= 3:
+                try:
+                    R_refined, t_refined = self._calc_transformation(
+                        dst[inlier_mask], src[inlier_mask]
+                    )
+                    final_rot[bidx] = torch.tensor(R_refined, device=device, dtype=dtype)
+                    final_trans[bidx] = torch.tensor(t_refined, device=device, dtype=dtype)
+                except np.linalg.LinAlgError:
+                    pass
+            else:
+                final_rot[bidx] = torch.tensor(best_rot, device=device, dtype=dtype)
+                final_trans[bidx] = torch.tensor(best_trans, device=device, dtype=dtype)
+        
+        return final_trans, final_rot
 
-        best_rot = torch.eye(3, device=device).unsqueeze(0).repeat(B, 1, 1)
-        best_trans = torch.zeros(B, 3, device=device)
-
-        for batch_idx in range(B):
-            # P = R @ Q + T
-            P = pc[batch_idx] # (N, 3)
-            Q = coord[batch_idx]
-
-            max_inlier_cnt = 0
-
-            for _ in range(iter):
-                # Randomly sample 3 points
-                indices = torch.randperm(N, device=device)[:sample_num]
-                P_sample = P[indices] # (3, 3)
-                Q_sample = Q[indices] # (3, 3)
-                # print(f"debug bs{batch_idx} iter {_}")
-                # print(P_sample.shape, P_sample.device, P_sample.dtype)
-                # print(Q_sample.shape, Q_sample.device, Q_sample.dtype)
-
-                # Compute the rotation matrix R and translation vector T
-                P_mean = torch.mean(P_sample, dim=0)
-                Q_mean = torch.mean(Q_sample, dim=0)
-                P_centered = P_sample - P_mean
-                Q_centered = Q_sample - Q_mean
-                # print(P_centered.shape, P_centered.device, P_centered.dtype)
-                # print(Q_centered.shape, Q_centered.device, Q_centered.dtype)
-
-
-                H = Q_centered.T @ P_centered # (3, 3)
-                # print("H", H.shape, H.device, H.dtype)
-
-                U, _, Vt = torch.linalg.svd(H)
-                det = torch.det(Vt.T @ U.T)
-                Vt[:, -1] *= det.sign()
-                rot_hyp = Vt.T @ U.T
-                trans_hyp = P_mean - rot_hyp @ Q_mean
-
-                # print((rot_hyp @ Q.T).shape)
-                # print(trans_hyp.shape)
-
-                P_pred = (rot_hyp @ Q.T + trans_hyp.unsqueeze(1)).T
-
-                loss = torch.sum((P - P_pred) ** 2, dim=1) # (N,)
-                inliers = loss < threshold
-                inlier_cnt = torch.sum(inliers)
-
-                if inlier_cnt > max_inlier_cnt:
-                    max_inlier_cnt = inlier_cnt
-                    best_rot[batch_idx] = rot_hyp
-                    best_trans[batch_idx] = trans_hyp
-                    best_inlier_indices = torch.where(inliers)[0]
-
-            if max_inlier_cnt >= sample_num:
-                P_inliers = P[best_inlier_indices]
-                Q_inliers = Q[best_inlier_indices]
-                P_mean = torch.mean(P_inliers, dim=0)
-                Q_mean = torch.mean(Q_inliers, dim=0)
-                P_centered = P_inliers - P_mean
-                Q_centered = Q_inliers - Q_mean
-
-                H = Q_centered.T @ P_centered
-                # print(H.shape)
-                U, _, Vt = torch.linalg.svd(H)
-                det = torch.det(Vt.T @ U.T)
-                Vt[:, -1] *= det.sign()
-                best_rot[batch_idx] = Vt.T @ U.T
-                best_trans[batch_idx] = P_mean - best_rot[batch_idx] @ Q_mean
-
-
-        return best_trans, best_rot
+    def _calc_transformation(self, q: np.ndarray, p: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        p_centroid = p.mean(0)
+        q_centroid = q.mean(0)
+        p_centered = p - p_centroid
+        q_centered = q - q_centroid
+        
+        cov_mat = q_centered.T @ p_centered + 1e-8 * np.eye(3)
+        U, _, Vt = np.linalg.svd(cov_mat)
+        
+        det = np.linalg.det(Vt.T @ U.T)
+        reflect = np.diag([1, 1, -1]) if det < 0 else np.eye(3)
+        
+        R = Vt.T @ reflect @ U.T
+        t = p_centroid - R @ q_centroid
+        
+        U_ortho, _, Vt_ortho = np.linalg.svd(R)
+        return U_ortho @ Vt_ortho, t
