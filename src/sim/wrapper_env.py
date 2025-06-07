@@ -301,10 +301,6 @@ class WrapperEnv:
         container_trans = container_pose[:3, 3].copy()
         init_quad_trans = self._init_container_pose[:3, 3].copy()
         dist_xy = np.linalg.norm(container_trans[:2] - init_quad_trans[:2])
-        
-        print(f"dist_xy: {dist_xy}")
-        print(f"container_trans : {container_trans}")
-        print(f"init_quad_trans : {init_quad_trans}")
 
         if dist_xy < 0.1:
             return True
