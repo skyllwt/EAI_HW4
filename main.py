@@ -274,12 +274,16 @@ def plan_move_qpos(begin_qpos, end_qpos, steps=50) -> np.ndarray:
         traj.append(cur_qpos.copy())
     
     return np.array(traj)
-def execute_plan(env: WrapperEnv, plan):
+def execute_plan(env: WrapperEnv, plan, debug=False, stage=0):
     """Execute the plan in the environment."""
     for step in range(len(plan)):
         env.step_env(
             humanoid_action=plan[step],
         )
+        if debug == True:
+            obs_head = env.get_obs(camera_id=0)
+            env.debug_save_obs(obs_head, f'data/{stage}/head_{step:04d}') 
+    
 
 
 TESTING = True
@@ -379,7 +383,9 @@ def main():
       
         table_pose = data_dict['table_pose']
     
-        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
+        # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
+        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.43, -0.5, 0])
+
           
         table_heading = yaw_robot_in_world(table_pose[:3, :3])
         target_yaw    = (table_heading - np.pi/2) % (2*np.pi)   
@@ -530,14 +536,135 @@ def main():
 
 
     # --------------------------------------step 4: plan to move and drop----------------------------------------------------
+    # if not DISABLE_GRASP and not DISABLE_MOVE:
+    #     # implement your moving plan
+    #     #
+    #     move_plan = plan_move(
+    #         env=env,
+    #     ) 
+    #     execute_plan(env, move_plan)
+    #     open_gripper(env)
+
     if not DISABLE_GRASP and not DISABLE_MOVE:
-        # implement your moving plan
-        #
-        move_plan = plan_move(
-            env=env,
-        ) 
-        execute_plan(env, move_plan)
-        open_gripper(env)
+        # 1. 获取当前机械臂关节位置
+        # current_arm_qpos = env.get_humanoid_arm_qpos()
+        current_arm_qpos = env.get_state()[:7]
+        
+        # 2. 计算投放位置（盒子正上方0.1米处）
+        obs_head = env.get_obs(camera_id=0)
+        env.debug_save_obs(obs_head, f'data/obs/before') 
+        yaw_ang = 0
+        pitch_ang = 0.7
+        env.step_env(
+            humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
+            quad_command=np.zeros(3)
+        )
+        obs_head = env.get_obs(camera_id=0)
+        env.debug_save_obs(obs_head, f'data/obs/after')
+
+
+        trans_marker_world, rot_marker_world = detect_marker_pose(
+            detector, obs_head.rgb, head_camera_params,
+            obs_head.camera_pose, tag_size=0.12)
+        
+        drop_height = 0.3  # 投放高度
+        # target_drop_trans = final_box_pose[:3, 3] + np.array([0, 0, drop_height])
+        target_drop_trans = trans_marker_world + np.array([0, 0, drop_height])
+        print("marker coordinate: ", trans_marker_world)
+        
+        # 保持当前夹爪朝向（竖直向下）
+        current_gripper_pose = env.humanoid_robot_model.fk_eef(current_arm_qpos)
+        # print("current gripper pose: ", current_gripper_pose)
+        # target_drop_rot = current_gripper_pose[:3, :3]  # 保持当前朝向
+        target_drop_rot = current_gripper_pose[1]
+        print("current gripper: ", current_gripper_pose)
+
+        target_drop_trans[2] = current_gripper_pose[0][2]
+        target_drop_trans[0] += 0.15
+
+        print("plan to drop at", target_drop_trans)
+        
+        # 3. 设置目标旋转（竖直向下）
+        # 创建竖直向下的旋转矩阵
+        # target_drop_rot = np.array([
+        #     [1, 0, 0],
+        #     [0, 0, 1],  # Z轴向上变为Y轴
+        #     [0, -1, 0]   # Y轴向上变为-Z轴
+        # ])
+        
+        # 4. 添加中间点
+        current_eef_pos, _ = env.humanoid_robot_model.fk_eef(current_arm_qpos)
+        intermediate_trans = current_eef_pos + (target_drop_trans - current_eef_pos) * 0.5
+        intermediate_trans[2] = max(intermediate_trans[2], 0.4)  # 确保足够高度
+        
+        # 5. 分段求解 IK
+        # 第一步：移动到中间点
+        success, intermediate_qpos = env.humanoid_robot_model.ik(
+            trans=intermediate_trans,
+            rot=target_drop_rot,
+            init_qpos=current_arm_qpos,
+            retry_times=10000
+        )
+        
+        if not success:
+            print("中间点 IK 失败！尝试直接移动到目标")
+            intermediate_qpos = current_arm_qpos  # 使用当前位置作为备选
+        
+        # 第二步：移动到投放点
+        success, target_arm_qpos = env.humanoid_robot_model.ik(
+            trans=target_drop_trans,
+            rot=target_drop_rot,
+            init_qpos=intermediate_qpos,
+            retry_times=10000
+        )
+        
+        if not success:
+            print("目标点 IK 失败！使用最近解")
+            # 获取 IK 求解器的最佳解（即使未完全收敛）
+            # target_arm_qpos = env.humanoid_robot_model.last_ik_solution
+        
+        # 6. 规划轨迹（添加更多步骤）
+        print("current qpos: ", current_arm_qpos)
+        print("intermediate_qpos: ", intermediate_qpos)
+        move_to_intermediate = plan_move_qpos(current_arm_qpos, intermediate_qpos, steps=30)
+        move_to_target = plan_move_qpos(intermediate_qpos, target_arm_qpos, steps=40)
+        
+        # 7. 执行投放
+        execute_plan(env, move_to_intermediate, debug=True, stage=0)
+        execute_plan(env, move_to_target, debug=True, stage=1)
+        open_gripper(env, steps=10)
+
+        # # 3. 求解逆运动学
+        # success, target_arm_qpos = env.humanoid_robot_model.ik(
+        #     trans=target_drop_trans,
+        #     rot=target_drop_rot,
+        #     init_qpos=current_arm_qpos
+        # )
+        
+        # if not success:
+        #     print("Warning: IK failed for drop position. Using alternative approach.")
+        #     # 备选方案：只移动位置，保持关节角度不变（可能不够精确但能工作）
+        #     target_arm_qpos = current_arm_qpos
+        
+        # # 4. 规划轨迹
+        # drop_steps = 50  # 轨迹步数
+        # drop_plan = plan_move_qpos(current_arm_qpos, target_arm_qpos, steps=drop_steps)
+        
+        # # 5. 执行投放
+        # execute_plan(env, drop_plan)  # 移动到投放位置
+        # open_gripper(env, steps=10)   # 打开夹爪
+        
+        # # 6. 机械臂抬升避免碰撞
+        # lift_offset = np.array([0, 0, 0.1])  # 上移10cm
+        # lift_trans = target_drop_trans + lift_offset
+        # success, lift_qpos = env.humanoid_robot_model.ik(
+        #     trans=lift_trans,
+        #     rot=target_drop_rot,
+        #     init_qpos=target_arm_qpos
+        # )
+        # if success:
+        #     lift_plan = plan_move_qpos(target_arm_qpos, lift_qpos, steps=20)
+        #     execute_plan(env, lift_plan)
 
 
     # --------------------------------------step 5: move quadruped backward to initial position------------------------------
