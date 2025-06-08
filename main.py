@@ -386,9 +386,9 @@ def main():
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.43, -0.5, 0])
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-1.2, 0])
-        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-1.05, 0])
+        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-0.95, 0])
 
-          
+        
         table_heading = yaw_robot_in_world(table_pose[:3, :3])
         # target_yaw    = (table_heading - np.pi/2) % (2*np.pi)   
         target_yaw    = (table_heading ) % (2*np.pi)   
@@ -602,7 +602,7 @@ def main():
         target_drop_trans[2] = current_gripper_pose[0][2]
         # target_drop_trans[0] += 0.15
         # target_drop_trans[1] += 0.5
-        target_drop_trans[1] += 0.3
+        target_drop_trans[1] += 0.25
 
         obs_head = env.get_obs(camera_id=0)
         env.debug_save_obs(obs_head, f'data/obs')
