@@ -320,8 +320,9 @@ class WrapperEnv:
         for f in os.listdir(data_dir):
             os.remove(os.path.join(data_dir, f))
         Image.fromarray(obs.rgb).save(os.path.join(data_dir, "rgb.png"))
+        # Image.fromarray(obs.depth).save(os.path.join(data_dir, ss"depth.png"))
         Image.fromarray(
-            (np.clip(obs.depth, 0, 2.0) * DEPTH_IMG_SCALE).astype(np.uint16)
+            (np.clip(obs.depth, 0, 2.0) * DEPTH_IMG_SCALE / 255).astype(np.uint8)
         ).save(os.path.join(data_dir, "depth.png"))
         np.save(os.path.join(data_dir, "camera_pose.npy"), obs.camera_pose)
 
