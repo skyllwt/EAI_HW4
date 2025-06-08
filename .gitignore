@@ -5,3 +5,4 @@ exps/
 wandb/
 MUJOCO_LOG.TXT
 main_qwt.py
+.vscode/
