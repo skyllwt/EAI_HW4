@@ -6,15 +6,10 @@ from pyapriltags import Detector
 
 from src.type import Grasp
 from src.utils import to_pose, get_pc, get_workspace_mask
-
-if True:
-    from src.real.wrapper_env import WrapperEnvConfig, WrapperEnv
-    from src.real.wrapper_env import get_grasps
-else:
-    from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
-    from src.sim.wrapper_env import get_grasps
-
-
+from src.real.wrapper_env import WrapperEnvConfig, WrapperEnv
+from src.real.wrapper_env import get_grasps
+# from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
+# from src.sim.wrapper_env import get_grasps
 from src.test.load_test import load_test_data
 import src.pose_detection.pose_detector as pose_detector
 from src.constants import OBSERVING_QPOS_DELTA
@@ -100,26 +95,34 @@ def forward_quad_policy(current_trans, current_yaw, target_trans, target_yaw, *a
     position_error_robot = R_world_to_robot @ position_error_global
 
 
-    kp_forward = 0.24
-    kp_lateral = 0.2   
-    kp_angular = 0.15       
+    # kp_forward = 1.2
+    # kp_lateral = 1.0   
+    # kp_angular = 1.2    
+
+    kp_forward = 0.3
+    kp_lateral = 0.5
+    kp_angular = 0.1
     
+    if 0.1 <= position_error_robot[0] and position_error_robot[0] <= 0.5:
+        kp_forward *= 2.2
+        # kp_lateral *= 2
+    # elif 0.1 <= position_error_robot[0] and position_error_robot[0] <= 0.3:
+    #     kp_forward = 1
+        # kp_lateral *= 3
     
     vx = kp_forward * position_error_robot[0]
-    
-    
     vy = kp_lateral * position_error_robot[1]
     
     
     angle_error = target_yaw - current_yaw
-    print(f"[dbg] current_yaw: {current_yaw}, target_yaw: {target_yaw}")
-    print(f"[dbg] angle_error before wrap: {angle_error}")
+    print(f"angle_error: {angle_error}")
     angle_error = (angle_error + np.pi) % (2 * np.pi) - np.pi
-    print(f"[dbg] angle_error: {angle_error}")
     wz = kp_angular * angle_error
 
-    max_linear_speed = 0.6
-    max_angular_speed = 0.5
+    # max_linear_speed = 3.0
+    # max_angular_speed = 1.0
+    max_linear_speed = .4
+    max_angular_speed = 1.
     vx = np.clip(vx, -max_linear_speed, max_linear_speed)
     vy = np.clip(vy, -max_linear_speed, max_linear_speed)
     wz = np.clip(wz, -max_angular_speed, max_angular_speed)
@@ -140,10 +143,14 @@ def is_close(pose1, pose2, threshold=0.05, thresh_yaw=np.deg2rad(5)):
 def backward_quad_policy(
         cur_pose: np.ndarray,
         goal_pose: np.ndarray,
-        v_max: float = 0.03,
-        w_max: float = 0.01,
-        Kp_xy: float = 0.16,
-        Kp_yaw: float = 0.12       
+        # v_max: float = 3.0,
+        # w_max: float = 1.2,
+        # Kp_xy: float = 4.0,
+        # Kp_yaw: float = 3.0       
+        v_max: float = 0.05,
+        w_max: float = 0.1,
+        Kp_xy: float = 0.2,
+        Kp_yaw: float = 0.5    
     ) -> np.ndarray:
 
     if cur_pose is None or goal_pose is None:
@@ -287,6 +294,7 @@ def plan_move_qpos(begin_qpos, end_qpos, steps=50) -> np.ndarray:
 def execute_plan(env: WrapperEnv, plan, debug=False, stage=0):
     """Execute the plan in the environment."""
     env.step_env(humanoid_action=plan)
+
     # for step in range(len(plan)):
     #     env.step_env(
     #         humanoid_action=plan[step],
@@ -299,7 +307,8 @@ def execute_plan(env: WrapperEnv, plan, debug=False, stage=0):
 
 TESTING = True
 DISABLE_GRASP = False
-DISABLE_MOVE = True
+DISABLE_MOVE = False
+
 
 def rotation_matrix_to_euler_angles(R):
     """将旋转矩阵转换为欧拉角 (roll, pitch, yaw)"""
@@ -319,8 +328,7 @@ def rotation_matrix_to_euler_angles(R):
 
 def yaw_robot_in_world(R_world_obj):
     """返回“机器狗真正前方”在世界坐标系里的 yaw 角"""
-    # return rotation_matrix_to_euler_angles(R_world_obj)[2] - np.pi/2
-    return np.arctan2(R_world_obj[1,0], R_world_obj[0,0]) 
+    return rotation_matrix_to_euler_angles(R_world_obj)[2] - np.pi/2
 
 def yaw_robot(R):            
     return np.arctan2(R[1,0], R[0,0]) - np.pi/2
@@ -364,7 +372,7 @@ def main():
             obj_pose=data_dict['obj_pose']
         )
         env.set_quad_reset_pos(data_dict['quad_reset_pos'])
-    
+
     env.launch()
     env.reset(humanoid_qpos=env.sim.humanoid_robot_cfg.joint_init_qpos)
     humanoid_init_qpos = env.sim.humanoid_robot_cfg.joint_init_qpos[:7]
@@ -385,9 +393,8 @@ def main():
 
     # --------------------------------------step 1: move quadruped to dropping position--------------------------------------
     if not DISABLE_MOVE:
-        print("\n===  Step-1: move quadruped to dropping position  ===")
         forward_steps = 1000  # number of steps that quadruped walk to dropping position
-        steps_per_camera_shot = 5  # number of steps per camera shot
+        steps_per_camera_shot = 1  # number of steps per camera shot
         head_camera_matrix = env.sim.humanoid_robot_cfg.camera_cfg[0].intrinsics
         head_camera_params = (head_camera_matrix[0, 0], head_camera_matrix[1, 1], 
                             head_camera_matrix[0, 2], head_camera_matrix[1, 2])
@@ -398,26 +405,15 @@ def main():
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.43, -0.5, 0])
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-1.2, 0])
-        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,0.5, 0])
+        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
 
-        
-
+          
         table_heading = yaw_robot_in_world(table_pose[:3, :3])
         # target_yaw    = (table_heading - np.pi/2) % (2*np.pi)   
-        target_yaw    = (table_heading ) % (2*np.pi) 
-
-
-
-        # estimated_quad_trans = env.sim.default_quad_pose[:3].copy()
-        # estimated_quad_yaw =  target_yaw 
-
+        target_yaw    = (table_heading ) % (2*np.pi)  - np.pi /2 
         
-        # last_valid_trans = None
-        # last_valid_rot = None
-        # head_scan_direction = 0.1  
-        # head_scan_angle = 0.0  
-        # scan_range = 0.8 
-        # scan_speed = 0.1 
+
+
 
         # initial_container_pose =  env._init_container_pose.copy()
   
@@ -438,83 +434,46 @@ def main():
         last_seen_step = -1
         lost_thr=3         
         # ------------------------------------------------
-        ALIGN_TH  = np.deg2rad(10)    # 对准阈值 5°
+        ALIGN_TH  = np.deg2rad(5)    # 对准阈值 5°
         ROT_GAIN  = 2.0              # 转身用的 P 增益
         aligned   = False            # 是否已完成转身
-        yaw_err = 0.0
-        quad_command = np.zeros(3) 
-
-        obs_head = env.get_obs(camera_id=0)
-
-        init_trans_marker_world, init_rot_marker_world = detect_marker_pose(
-                    detector, obs_head.rgb, head_camera_params,
-                    obs_head.camera_pose, tag_size=0.12)
-        init_yaw = yaw_robot_in_world(init_rot_marker_world)
-        print(f"[dbg] init_yaw : {init_yaw}")
-
-
 
         for step in range(forward_steps):
 
-            print(f"\n===  Step-1: step {step+1}/{forward_steps}  ===")
-
-            tag_found = False                  
-
-
+            tag_found = False              
+            quad_cmd             = np.zeros(3)      
+       
            
             if step % steps_per_camera_shot == 0:
                 obs_head = env.get_obs(camera_id=0)
-                # if step %20 ==0:
-                #     env.debug_save_obs(obs_head, f'data/head_{step:04d}') 
-
+                if step %2 ==0:
+                    env.debug_save_obs(obs_head, f'data/head_{step:04d}') 
+                    print(f"[dbg] step {step} - saving head observation")
                 trans_marker_world, rot_marker_world = detect_marker_pose(
                     detector, obs_head.rgb, head_camera_params,
                     obs_head.camera_pose, tag_size=0.12)
 
-                print(f"[dbg]:trans_marker_world:{trans_marker_world}")
-                      
                 if trans_marker_world is not None:         
                     tag_found = True
-                    last_seen_step = step           
+                    last_seen_step = step
                     
                     trans_container_world = rot_marker_world @ np.array([0,0.31,0.02]) + trans_marker_world
                     rot_container_world   = rot_marker_world
-                    # quad_yaw_world        = yaw_robot_in_world(rot_container_world)
-                    quad_yaw_world        = yaw_robot_in_world(rot_container_world) 
-
+                    quad_yaw_world        = yaw_robot_in_world(rot_container_world)
                     pose_container_world  = to_pose(trans_container_world, rot_container_world)
                     
-                    print(f"[dbg]target_yaw : {target_yaw}")
-                    print(f"[dbg]quad_yaw_world : {quad_yaw_world}")
-                    yaw_err = np.abs (target_yaw - quad_yaw_world) 
-
-                   
+                    yaw_err = ((target_yaw - quad_yaw_world ) % (2 * np.pi)) % np.pi
                     
-                    if not aligned :
-                        if abs(yaw_err) > ALIGN_TH:
-                            quad_command =  forward_quad_policy(
+                    print("target: ", target_trans)
+                    print("current: ", trans_container_world)
+                    quad_command = forward_quad_policy(
                             trans_container_world, quad_yaw_world,
                             target_trans,        target_yaw)
-                            quad_command[:2] = 0.0  
-                        else:
-                            aligned = True     
 
-                    else:
-                        quad_command = forward_quad_policy(
-                            trans_container_world, quad_yaw_world,
-                            target_trans,        target_yaw)
-                        
-                     
-                    print(f"\n===  Step-1: step {step+1}/{forward_steps}  ===")
-                    print(f"[dbg] aligned : {aligned}")
-                    print(f"[dbg] yaw_err : {yaw_err}") 
                
                     
                 else:                                      
-                    quad_command = np.zeros(3)      
-                    print(f"[dbg] No tag found at step {step}, using zero command.")
-            
-    
+                    quad_command = np.zeros(3)             
 
             
             if step - last_seen_step > lost_thr:
@@ -530,7 +489,8 @@ def main():
                 #     yaw_dir *= -1
                 #     yaw_ang  = np.clip(yaw_ang, -YAW_RANGE, YAW_RANGE)
 
-            
+            print(f"target yaw : {target_yaw}")
+            print(f"quad yaw : {quad_yaw_world}")
             env.step_env(
                 humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
                 quad_command=quad_command
@@ -546,56 +506,55 @@ def main():
     # --------------------------------------step 2: detect driller pose------------------------------------------------------
 
     
-    if not DISABLE_GRASP:
-        obs_wrist = env.get_obs(camera_id=1) # wrist camera
-        # env.debug_save_obs(obs_wrist, "tmp_data")
-        rgb, depth, camera_pose = obs_wrist.rgb, obs_wrist.depth, obs_wrist.camera_pose
-        wrist_camera_matrix = env.sim.humanoid_robot_cfg.camera_cfg[1].intrinsics
-        env.debug_save_obs(obs_wrist, f'tmp_obs') # save wrist camera observation
-        driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose)
-        # metric judgement
-        Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
+    # if not DISABLE_GRASP:
+    #     obs_wrist = env.get_obs(camera_id=1) # wrist camera
+    #     # env.debug_save_obs(obs_wrist, "tmp_data")
+    #     rgb, depth, camera_pose = obs_wrist.rgb, obs_wrist.depth, obs_wrist.camera_pose
+    #     wrist_camera_matrix = env.sim.humanoid_robot_cfg.camera_cfg[1].intrinsics
+    #     driller_pose = detect_driller_pose(rgb, depth, wrist_camera_matrix, camera_pose)
+    #     # metric judgement
+    #     Metric['obj_pose'] = env.metric_obj_pose(driller_pose)
     
     
     # driller_pose = env.get_driller_pose()
 
     # --------------------------------------step 3: plan grasp and lift------------------------------------------------------
-    if not DISABLE_GRASP:
-        obj_pose = driller_pose.copy()
-        grasps = get_grasps(args.obj) 
-        grasps0_n = Grasp(grasps[0].trans, grasps[0].rot @ np.diag([-1,-1,1]), grasps[0].width)
-        grasps2_n = Grasp(grasps[2].trans, grasps[2].rot @ np.diag([-1,-1,1]), grasps[2].width)
-        valid_grasps = [grasps[0], grasps0_n, grasps[2], grasps2_n] # we have provided some grasps, you can choose to use them or yours
-        grasp_config = dict( 
-            reach_steps=50,
-            lift_steps=30,
-            delta_dist=0.05, 
-            max_traj_length=2.5,
-            max_ik_attempts=10,
-        ) # the grasping design in assignment 2, you can choose to use it or design yours
+    # if not DISABLE_GRASP:
+    #     obj_pose = driller_pose.copy()
+    #     grasps = get_grasps(args.obj) 
+    #     grasps0_n = Grasp(grasps[0].trans, grasps[0].rot @ np.diag([-1,-1,1]), grasps[0].width)
+    #     grasps2_n = Grasp(grasps[2].trans, grasps[2].rot @ np.diag([-1,-1,1]), grasps[2].width)
+    #     valid_grasps = [grasps[0], grasps0_n, grasps[2], grasps2_n] # we have provided some grasps, you can choose to use them or yours
+    #     grasp_config = dict( 
+    #         reach_steps=50,
+    #         lift_steps=30,
+    #         delta_dist=0.05, 
+    #         max_traj_length=2.5,
+    #         max_ik_attempts=10,
+    #     ) # the grasping design in assignment 2, you can choose to use it or design yours
 
-        for obj_frame_grasp in valid_grasps:
-            robot_frame_grasp = Grasp(
-                trans=obj_pose[:3, :3] @ obj_frame_grasp.trans
-                + obj_pose[:3, 3],
-                rot=obj_pose[:3, :3] @ obj_frame_grasp.rot,
-                width=obj_frame_grasp.width,
-            )
-            grasp_plan = plan_grasp(env, robot_frame_grasp, grasp_config)
-            if grasp_plan is not None:
-                break
-        if grasp_plan is None:
-            print("No valid grasp plan found.")
-            env.close()
-            return
-        reach_plan, lift_plan = grasp_plan
+    #     for obj_frame_grasp in valid_grasps:
+    #         robot_frame_grasp = Grasp(
+    #             trans=obj_pose[:3, :3] @ obj_frame_grasp.trans
+    #             + obj_pose[:3, 3],
+    #             rot=obj_pose[:3, :3] @ obj_frame_grasp.rot,
+    #             width=obj_frame_grasp.width,
+    #         )
+    #         grasp_plan = plan_grasp(env, robot_frame_grasp, grasp_config)
+    #         if grasp_plan is not None:
+    #             break
+    #     if grasp_plan is None:
+    #         print("No valid grasp plan found.")
+    #         env.close()
+    #         return
+    #     reach_plan, lift_plan = grasp_plan
 
-        pregrasp_plan = plan_move_qpos(observing_qpos, reach_plan[0], steps=50) # pregrasp, change if you want
-        execute_plan(env, pregrasp_plan)
-        open_gripper(env)
-        execute_plan(env, reach_plan)
-        close_gripper(env)
-        execute_plan(env, lift_plan)
+    #     pregrasp_plan = plan_move_qpos(observing_qpos, reach_plan[0], steps=50) # pregrasp, change if you want
+    #     execute_plan(env, pregrasp_plan)
+    #     open_gripper(env)
+    #     execute_plan(env, reach_plan)
+    #     close_gripper(env)
+    #     execute_plan(env, lift_plan)
 
 
     # --------------------------------------step 4: plan to move and drop----------------------------------------------------
@@ -608,99 +567,99 @@ def main():
     #     execute_plan(env, move_plan)
     #     open_gripper(env)
 
-    if not DISABLE_GRASP and not DISABLE_MOVE:
-        # 1. 获取当前机械臂关节位置
-        # current_arm_qpos = env.get_humanoid_arm_qpos()
-        current_arm_qpos = env.get_state()[:7]
+    # if not DISABLE_GRASP and not DISABLE_MOVE:
+    #     # 1. 获取当前机械臂关节位置
+    #     # current_arm_qpos = env.get_humanoid_arm_qpos()
+    #     current_arm_qpos = env.get_state()[:7]
         
-        # 2. 计算投放位置（盒子正上方0.1米处）
-        # obs_head = env.get_obs(camera_id=0)
-        # env.debug_save_obs(obs_head, f'data/obs/before') 
-        # yaw_ang = 0
-        # pitch_ang = 0.7
-        # env.step_env(
-        #     humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
-        #     quad_command=np.zeros(3)
-        # )
-        # obs_head = env.get_obs(camera_id=0)
-        # env.debug_save_obs(obs_head, f'data/obs/after')
+    #     # 2. 计算投放位置（盒子正上方0.1米处）
+    #     # obs_head = env.get_obs(camera_id=0)
+    #     # env.debug_save_obs(obs_head, f'data/obs/before') 
+    #     # yaw_ang = 0
+    #     # pitch_ang = 0.7
+    #     # env.step_env(
+    #     #     humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
+    #     #     quad_command=np.zeros(3)
+    #     # )
+    #     # obs_head = env.get_obs(camera_id=0)
+    #     # env.debug_save_obs(obs_head, f'data/obs/after')
 
 
-        trans_marker_world, rot_marker_world = detect_marker_pose(
-            detector, obs_head.rgb, head_camera_params,
-            obs_head.camera_pose, tag_size=0.12)
+    #     trans_marker_world, rot_marker_world = detect_marker_pose(
+    #         detector, obs_head.rgb, head_camera_params,
+    #         obs_head.camera_pose, tag_size=0.12)
         
-        drop_height = 0.3  # 投放高度
-        # target_drop_trans = final_box_pose[:3, 3] + np.array([0, 0, drop_height])
-        target_drop_trans = trans_marker_world + np.array([0, 0, drop_height])
-        print("marker coordinate: ", trans_marker_world)
+    #     drop_height = 0.3  # 投放高度
+    #     # target_drop_trans = final_box_pose[:3, 3] + np.array([0, 0, drop_height])
+    #     target_drop_trans = trans_marker_world + np.array([0, 0, drop_height])
+    #     print("marker coordinate: ", trans_marker_world)
         
-        # 保持当前夹爪朝向（竖直向下）
-        current_gripper_pose = env.humanoid_robot_model.fk_eef(current_arm_qpos)
-        # print("current gripper pose: ", current_gripper_pose)
-        # target_drop_rot = current_gripper_pose[:3, :3]  # 保持当前朝向
-        target_drop_rot = current_gripper_pose[1]
-        print("current gripper: ", current_gripper_pose)
+    #     # 保持当前夹爪朝向（竖直向下）
+    #     current_gripper_pose = env.humanoid_robot_model.fk_eef(current_arm_qpos)
+    #     # print("current gripper pose: ", current_gripper_pose)
+    #     # target_drop_rot = current_gripper_pose[:3, :3]  # 保持当前朝向
+    #     target_drop_rot = current_gripper_pose[1]
+    #     print("current gripper: ", current_gripper_pose)
 
-        target_drop_trans[2] = current_gripper_pose[0][2]
-        # target_drop_trans[0] += 0.15
-        # target_drop_trans[1] += 0.5
-        target_drop_trans[1] += 0.3
+    #     target_drop_trans[2] = current_gripper_pose[0][2]
+    #     # target_drop_trans[0] += 0.15
+    #     # target_drop_trans[1] += 0.5
+    #     target_drop_trans[1] += 0.3
 
-        obs_head = env.get_obs(camera_id=0)
-        env.debug_save_obs(obs_head, f'data/obs')
+    #     obs_head = env.get_obs(camera_id=0)
+    #     env.debug_save_obs(obs_head, f'data/obs')
 
-        print("plan to drop at", target_drop_trans)
+    #     print("plan to drop at", target_drop_trans)
         
-        # 3. 设置目标旋转（竖直向下）
-        # 创建竖直向下的旋转矩阵
-        # target_drop_rot = np.array([
-        #     [1, 0, 0],
-        #     [0, 0, 1],  # Z轴向上变为Y轴
-        #     [0, -1, 0]   # Y轴向上变为-Z轴
-        # ])
+    #     # 3. 设置目标旋转（竖直向下）
+    #     # 创建竖直向下的旋转矩阵
+    #     # target_drop_rot = np.array([
+    #     #     [1, 0, 0],
+    #     #     [0, 0, 1],  # Z轴向上变为Y轴
+    #     #     [0, -1, 0]   # Y轴向上变为-Z轴
+    #     # ])
         
-        # 4. 添加中间点
-        current_eef_pos, _ = env.humanoid_robot_model.fk_eef(current_arm_qpos)
-        intermediate_trans = current_eef_pos + (target_drop_trans - current_eef_pos) * 0.5
-        intermediate_trans[2] = max(intermediate_trans[2], 0.4)  # 确保足够高度
+    #     # 4. 添加中间点
+    #     current_eef_pos, _ = env.humanoid_robot_model.fk_eef(current_arm_qpos)
+    #     intermediate_trans = current_eef_pos + (target_drop_trans - current_eef_pos) * 0.5
+    #     intermediate_trans[2] = max(intermediate_trans[2], 0.4)  # 确保足够高度
         
-        # 5. 分段求解 IK
-        # 第一步：移动到中间点
-        success, intermediate_qpos = env.humanoid_robot_model.ik(
-            trans=intermediate_trans,
-            rot=target_drop_rot,
-            init_qpos=current_arm_qpos,
-            retry_times=10000
-        )
+    #     # 5. 分段求解 IK
+    #     # 第一步：移动到中间点
+    #     success, intermediate_qpos = env.humanoid_robot_model.ik(
+    #         trans=intermediate_trans,
+    #         rot=target_drop_rot,
+    #         init_qpos=current_arm_qpos,
+    #         retry_times=10000
+    #     )
         
-        if not success:
-            print("中间点 IK 失败！尝试直接移动到目标")
-            intermediate_qpos = current_arm_qpos  # 使用当前位置作为备选
+    #     if not success:
+    #         print("中间点 IK 失败！尝试直接移动到目标")
+    #         intermediate_qpos = current_arm_qpos  # 使用当前位置作为备选
         
-        # 第二步：移动到投放点
-        success, target_arm_qpos = env.humanoid_robot_model.ik(
-            trans=target_drop_trans,
-            rot=target_drop_rot,
-            init_qpos=intermediate_qpos,
-            retry_times=10000
-        )
+    #     # 第二步：移动到投放点
+    #     success, target_arm_qpos = env.humanoid_robot_model.ik(
+    #         trans=target_drop_trans,
+    #         rot=target_drop_rot,
+    #         init_qpos=intermediate_qpos,
+    #         retry_times=10000
+    #     )
         
-        if not success:
-            print("目标点 IK 失败！使用最近解")
-            # 获取 IK 求解器的最佳解（即使未完全收敛）
-            # target_arm_qpos = env.humanoid_robot_model.last_ik_solution
+    #     if not success:
+    #         print("目标点 IK 失败！使用最近解")
+    #         # 获取 IK 求解器的最佳解（即使未完全收敛）
+    #         # target_arm_qpos = env.humanoid_robot_model.last_ik_solution
         
-        # 6. 规划轨迹（添加更多步骤）
-        print("current qpos: ", current_arm_qpos)
-        print("intermediate_qpos: ", intermediate_qpos)
-        move_to_intermediate = plan_move_qpos(current_arm_qpos, intermediate_qpos, steps=10)
-        move_to_target = plan_move_qpos(intermediate_qpos, target_arm_qpos, steps=10)
+    #     # 6. 规划轨迹（添加更多步骤）
+    #     print("current qpos: ", current_arm_qpos)
+    #     print("intermediate_qpos: ", intermediate_qpos)
+    #     move_to_intermediate = plan_move_qpos(current_arm_qpos, intermediate_qpos, steps=10)
+    #     move_to_target = plan_move_qpos(intermediate_qpos, target_arm_qpos, steps=10)
         
-        # 7. 执行投放
-        execute_plan(env, move_to_intermediate, debug=True, stage=0)
-        execute_plan(env, move_to_target, debug=True, stage=1)
-        open_gripper(env, steps=10)
+    #     # 7. 执行投放
+    #     execute_plan(env, move_to_intermediate, debug=True, stage=0)
+    #     execute_plan(env, move_to_target, debug=True, stage=1)
+    #     open_gripper(env, steps=10)
 
         # # 3. 求解逆运动学
         # success, target_arm_qpos = env.humanoid_robot_model.ik(
@@ -778,8 +737,8 @@ def main():
            
             if step % steps_per_cam_shot == 0:
                 obs_head = env.get_obs(camera_id=0)
-                # if step % 20 == 0:                       
-                #     env.debug_save_obs(obs_head, f'data/back_{step:04d}')
+                if step % 20 == 0:                       
+                    env.debug_save_obs(obs_head, f'data/back_{step:04d}')
 
                 trans_tag, rot_tag = detect_marker_pose(
                     detector, obs_head.rgb, head_cam_params,
@@ -810,11 +769,11 @@ def main():
                     pitch_dir *= -1
                     pitch_ang  = np.clip(pitch_ang, PITCH_DN, PITCH_UP)
 
-                # ② 水平微摆
-                yaw_ang += yaw_dir * YAW_STEP
-                if abs(yaw_ang) > YAW_RANGE:
-                    yaw_dir *= -1
-                    yaw_ang  = np.clip(yaw_ang, -YAW_RANGE, YAW_RANGE)
+                # # ② 水平微摆
+                # yaw_ang += yaw_dir * YAW_STEP
+                # if abs(yaw_ang) > YAW_RANGE:
+                #     yaw_dir *= -1
+                #     yaw_ang  = np.clip(yaw_ang, -YAW_RANGE, YAW_RANGE)
 
             # ---------------- 执行动作 -----------------
             env.step_env(
