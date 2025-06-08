@@ -6,8 +6,15 @@ from pyapriltags import Detector
 
 from src.type import Grasp
 from src.utils import to_pose, get_pc, get_workspace_mask
-from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
-from src.sim.wrapper_env import get_grasps
+
+if True:
+    from src.real.wrapper_env import WrapperEnvConfig, WrapperEnv
+    from src.real.wrapper_env import get_grasps
+else:
+    from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
+    from src.sim.wrapper_env import get_grasps
+
+
 from src.test.load_test import load_test_data
 import src.pose_detection.pose_detector as pose_detector
 from src.constants import OBSERVING_QPOS_DELTA
@@ -601,7 +608,8 @@ def main():
 
         target_drop_trans[2] = current_gripper_pose[0][2]
         # target_drop_trans[0] += 0.15
-        target_drop_trans[1] += 0.5
+        # target_drop_trans[1] += 0.5
+        target_drop_trans[1] += 0.3
 
         obs_head = env.get_obs(camera_id=0)
         env.debug_save_obs(obs_head, f'data/obs')
@@ -650,8 +658,8 @@ def main():
         # 6. 规划轨迹（添加更多步骤）
         print("current qpos: ", current_arm_qpos)
         print("intermediate_qpos: ", intermediate_qpos)
-        move_to_intermediate = plan_move_qpos(current_arm_qpos, intermediate_qpos, steps=30)
-        move_to_target = plan_move_qpos(intermediate_qpos, target_arm_qpos, steps=40)
+        move_to_intermediate = plan_move_qpos(current_arm_qpos, intermediate_qpos, steps=10)
+        move_to_target = plan_move_qpos(intermediate_qpos, target_arm_qpos, steps=10)
         
         # 7. 执行投放
         execute_plan(env, move_to_intermediate, debug=True, stage=0)
