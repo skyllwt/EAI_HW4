@@ -384,11 +384,15 @@ def main():
         table_pose = data_dict['table_pose']
     
         # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.35,-0.5, 0])
-        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.43, -0.5, 0])
+        # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.43, -0.5, 0])
+        # target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-1.2, 0])
+        target_trans = table_pose[:3, 3] + table_pose[:3, :3] @ np.array([-0.1,-1.05, 0])
 
           
         table_heading = yaw_robot_in_world(table_pose[:3, :3])
-        target_yaw    = (table_heading - np.pi/2) % (2*np.pi)   
+        # target_yaw    = (table_heading - np.pi/2) % (2*np.pi)   
+        target_yaw    = (table_heading ) % (2*np.pi)   
+
 
 
         estimated_quad_trans = env.sim.default_quad_pose[:3].copy()
@@ -407,9 +411,11 @@ def main():
         
 
         pitch_ang  = head_init_qpos[1]     
-        pitch_dir  = -1                   
+        # pitch_dir  = -1                   
+        pitch_dir  = 1
         PITCH_STEP = 0.05                
-        PITCH_UP   = 0.50                
+        # PITCH_UP   = 0.50              
+        PITCH_UP   = 0.90  
         PITCH_DN   = 0.05                
 
         yaw_ang    = 0.0                  
@@ -419,6 +425,9 @@ def main():
         last_seen_step = -1
         lost_thr=3         
         # ------------------------------------------------
+        ALIGN_TH  = np.deg2rad(5)    # 对准阈值 5°
+        ROT_GAIN  = 2.0              # 转身用的 P 增益
+        aligned   = False            # 是否已完成转身
 
         for step in range(forward_steps):
 
@@ -443,11 +452,22 @@ def main():
                     rot_container_world   = rot_marker_world
                     quad_yaw_world        = yaw_robot_in_world(rot_container_world)
                     pose_container_world  = to_pose(trans_container_world, rot_container_world)
-
                     
-                    quad_command = forward_quad_policy(
-                        trans_container_world, quad_yaw_world,
-                        target_trans,        target_yaw)
+                    yaw_err = ((target_yaw - quad_yaw_world ) % (2 * np.pi)) % np.pi
+                    
+                    if not aligned :
+                        if abs(yaw_err) > ALIGN_TH:
+                            quad_command =  forward_quad_policy(
+                            trans_container_world, quad_yaw_world,
+                            target_trans,        target_yaw)
+                            quad_command[:2] = 0.0  
+                        else:
+                            aligned = True     
+                       
+                    else:
+                        quad_command = forward_quad_policy(
+                            trans_container_world, quad_yaw_world,
+                            target_trans,        target_yaw)
 
                
                     
@@ -463,10 +483,10 @@ def main():
                     pitch_ang  = np.clip(pitch_ang, PITCH_DN, PITCH_UP)
 
              
-                yaw_ang += yaw_dir * YAW_STEP
-                if abs(yaw_ang) > YAW_RANGE:
-                    yaw_dir *= -1
-                    yaw_ang  = np.clip(yaw_ang, -YAW_RANGE, YAW_RANGE)
+                # yaw_ang += yaw_dir * YAW_STEP
+                # if abs(yaw_ang) > YAW_RANGE:
+                #     yaw_dir *= -1
+                #     yaw_ang  = np.clip(yaw_ang, -YAW_RANGE, YAW_RANGE)
 
             
             env.step_env(
@@ -551,16 +571,16 @@ def main():
         current_arm_qpos = env.get_state()[:7]
         
         # 2. 计算投放位置（盒子正上方0.1米处）
-        obs_head = env.get_obs(camera_id=0)
-        env.debug_save_obs(obs_head, f'data/obs/before') 
-        yaw_ang = 0
-        pitch_ang = 0.7
-        env.step_env(
-            humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
-            quad_command=np.zeros(3)
-        )
-        obs_head = env.get_obs(camera_id=0)
-        env.debug_save_obs(obs_head, f'data/obs/after')
+        # obs_head = env.get_obs(camera_id=0)
+        # env.debug_save_obs(obs_head, f'data/obs/before') 
+        # yaw_ang = 0
+        # pitch_ang = 0.7
+        # env.step_env(
+        #     humanoid_head_qpos=np.array([yaw_ang, pitch_ang]),
+        #     quad_command=np.zeros(3)
+        # )
+        # obs_head = env.get_obs(camera_id=0)
+        # env.debug_save_obs(obs_head, f'data/obs/after')
 
 
         trans_marker_world, rot_marker_world = detect_marker_pose(
@@ -580,7 +600,11 @@ def main():
         print("current gripper: ", current_gripper_pose)
 
         target_drop_trans[2] = current_gripper_pose[0][2]
-        target_drop_trans[0] += 0.15
+        # target_drop_trans[0] += 0.15
+        target_drop_trans[1] += 0.5
+
+        obs_head = env.get_obs(camera_id=0)
+        env.debug_save_obs(obs_head, f'data/obs')
 
         print("plan to drop at", target_drop_trans)
         
