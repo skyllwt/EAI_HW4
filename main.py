@@ -5,14 +5,331 @@ import cv2
 from pyapriltags import Detector
 
 from src.type import Grasp
-from src.utils import to_pose, get_pc, get_workspace_mask
+from src.utils import to_pose
 from src.sim.wrapper_env import WrapperEnvConfig, WrapperEnv
 from src.sim.wrapper_env import get_grasps
 from src.test.load_test import load_test_data
-import src.pose_detection.pose_detector as pose_detector
-from src.constants import OBSERVING_QPOS_DELTA
-from visualize import plot_pointclouds_with_poses, random_sampling
+import torch.nn as nn
+import torch
+from dataclasses import dataclass
+from typing import Tuple, Dict
 
+@dataclass
+class Config:
+    model_type: str = None
+    """can be est_pose or est_coord"""
+    exp_name: str = "debug"
+    """if exp_name is debug, it won't be logged in wandb"""
+    robot: str = "galbot"
+    """the robot we are using"""
+    obj_name: str = "power_drill"
+    """the object we want to grasp"""
+    checkpoint: str = None
+    """if not None, then we will continue training from this checkpoint"""
+    max_iter: int = 20000
+    """the maximum number of iterations"""
+    batch_size: int = 64
+    """the batch size for training"""
+    learning_rate: float = 1e-3
+    """maximum (and initial) learning rates"""
+    learning_rate_min: float = 1e-8
+    """we use cosine decay for learning rate, and this is the minimum (and final) learning rate"""
+    log_interval: int = 100
+    """log for each log_interval iterations"""
+    save_interval: int = 2500
+    """save the model every save_interval iterations"""
+    val_interval: int = 500
+    """get metric from validation set every val_interval iterations"""
+    val_num: int = 10
+    """run val_num batches for each validation to get stable result"""
+    num_workers: int = 8
+    """how many workers to use for data loading, if you are debugging, use 0 so that it won't create new processes"""
+    seed: int = 0
+    """the random seed for training"""
+    device: str = "cuda:0"
+    """the device to use for training, you can use cuda:0 if you have a gpu"""
+    point_num: int = 1024
+    """number of points sampled from the full observation point cloud"""
+
+class EstCoordNet(nn.Module):
+
+    config: Config
+
+    def __init__(self, config: Config):
+        """
+        Estimate the coordinates in the object frame for each object point.
+        """
+        super().__init__()
+        self.config = config
+        self.mlp1 = nn.Sequential(
+            nn.Conv1d(3, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Conv1d(64, 64, 1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+        )
+        self.mlp1_res = nn.Sequential(
+            nn.Conv1d(64, 128, 1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 1024, 1),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(),
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Conv1d(1088, 512, 1),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Conv1d(512, 256, 1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Conv1d(256, 128, 1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 3, 1),
+        )
+        # raise NotImplementedError("You need to implement some modules here")
+
+    def forward(
+        self, pc: torch.Tensor, coord: torch.Tensor, **kwargs
+    ) -> Tuple[float, Dict[str, float]]:
+        """
+        Forward of EstCoordNet
+
+        Parameters
+        ----------
+        pc: torch.Tensor
+            Point cloud in camera frame, shape \(B, N, 3\)
+        coord: torch.Tensor
+            Ground truth coordinates in the object frame, shape \(B, N, 3\)
+
+        Returns
+        -------
+        float
+            The loss value according to ground truth coordinates
+        Dict[str, float]
+            A dictionary containing additional metrics you want to log
+        """
+        # raise NotImplementedError("You need to implement the forward function")
+        
+        pc = pc.transpose(1, 2)
+        pc_after_1 = self.mlp1(pc)
+        pc_after_1_res = self.mlp1_res(pc_after_1)
+        pc_after_1_res = torch.amax(pc_after_1_res, dim=2).unsqueeze(2).expand(-1, -1, pc_after_1.shape[2])
+        pc_full = torch.cat([pc_after_1, pc_after_1_res], dim=1)
+        pred = self.mlp2(pc_full)
+        pred = pred.transpose(1, 2)
+        loss = nn.MSELoss()(pred, coord)
+        
+        metric = dict(
+            loss=loss,
+            # additional metrics you want to log
+        )
+        return loss, metric
+
+    def est(self, pc: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Estimate translation and rotation in the camera frame
+
+        Parameters
+        ----------
+        pc : torch.Tensor
+            Point cloud in camera frame, shape \(B, N, 3\)
+
+        Returns
+        -------
+        trans: torch.Tensor
+            Estimated translation vector in camera frame, shape \(B, 3\)
+        rot: torch.Tensor
+            Estimated rotation matrix in camera frame, shape \(B, 3, 3\)
+
+        Note
+        ----
+        The rotation matrix should satisfy the requirement of orthogonality and determinant 1.
+
+        We don't have a strict limit on the running time, so you can use for loops and numpy instead of batch processing and torch.
+
+        The only requirement is that the input and output should be torch tensors on the same device and with the same dtype.
+        """
+        batch_size, num_points, _ = pc.shape
+        device, dtype = pc.device, pc.dtype
+        
+        pc_trans = pc.transpose(1, 2)
+        pc_after_1 = self.mlp1(pc_trans)
+        pc_after_1_res = self.mlp1_res(pc_after_1)
+        pc_after_1_res = torch.amax(pc_after_1_res, dim=2).unsqueeze(2).expand(-1, -1, pc_after_1.shape[2])
+        pc_full = torch.cat([pc_after_1, pc_after_1_res], dim=1)
+        pred_coords = self.mlp2(pc_full).transpose(1, 2)
+        
+        final_rot = torch.eye(3, device=device, dtype=dtype).repeat(batch_size, 1, 1)
+        final_trans = torch.zeros(batch_size, 3, device=device, dtype=dtype)
+        
+        for bidx in range(batch_size):
+            src = pc[bidx].detach().cpu().numpy()
+            dst = pred_coords[bidx].detach().cpu().numpy()
+            
+            best_rot = np.eye(3)
+            best_trans = np.zeros(3)
+            max_inliers = 0
+            inlier_mask = None
+            
+            for _ in range(1000):
+                for attempt in range(10):
+                    sample_idx = np.random.choice(num_points, 3, replace=False)
+                    sample_src = src[sample_idx]
+                    sample_dst = dst[sample_idx]
+
+                    vec1 = sample_src[1] - sample_src[0]
+                    vec2 = sample_src[2] - sample_src[0]
+                    if np.linalg.norm(np.cross(vec1, vec2)) > 1e-7:
+                        break
+                else:
+                    continue
+                
+                try:
+                    R, t = self._calc_transformation(sample_dst, sample_src)
+                except np.linalg.LinAlgError:
+                    continue
+                
+                error = np.linalg.norm((R @ dst.T).T + t - src, axis=1)
+                curr_inliers = np.sum(error < 0.005)
+                
+                if curr_inliers > max_inliers:
+                    best_rot = R
+                    best_trans = t
+                    max_inliers = curr_inliers
+                    inlier_mask = error < 0.005
+            
+            if max_inliers >= 3:
+                try:
+                    R_refined, t_refined = self._calc_transformation(
+                        dst[inlier_mask], src[inlier_mask]
+                    )
+                    final_rot[bidx] = torch.tensor(R_refined, device=device, dtype=dtype)
+                    final_trans[bidx] = torch.tensor(t_refined, device=device, dtype=dtype)
+                except np.linalg.LinAlgError:
+                    pass
+            else:
+                final_rot[bidx] = torch.tensor(best_rot, device=device, dtype=dtype)
+                final_trans[bidx] = torch.tensor(best_trans, device=device, dtype=dtype)
+        
+        return final_trans, final_rot
+
+    def _calc_transformation(self, q: np.ndarray, p: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        p_centroid = p.mean(0)
+        q_centroid = q.mean(0)
+        p_centered = p - p_centroid
+        q_centered = q - q_centroid
+        
+        cov_mat = q_centered.T @ p_centered + 1e-8 * np.eye(3)
+        U, _, Vt = np.linalg.svd(cov_mat)
+        
+        det = np.linalg.det(Vt.T @ U.T)
+        reflect = np.diag([1, 1, -1]) if det < 0 else np.eye(3)
+        
+        R = Vt.T @ reflect @ U.T
+        t = p_centroid - R @ q_centroid
+        
+        U_ortho, _, Vt_ortho = np.linalg.svd(R)
+        return U_ortho @ Vt_ortho, t
+
+config = Config()
+model = EstCoordNet(config)
+
+ckpt = torch.load("model_ckpt.pth", map_location="cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model.load_state_dict(ckpt["model"])
+model = model.eval().to(device)
+
+PC_MIN = np.array(
+    [
+        0.2,
+        0,
+        0.735,
+    ]
+)
+
+PC_MAX = np.array(
+    [
+        1,
+        0.8,
+        0.85,
+    ]
+)
+
+OBSERVING_QPOS_DELTA = np.array([0.01,0,0.25,0,0,0,0.15])
+
+def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
+    """
+    Convert depth image into point cloud using intrinsics
+
+    All points with depth=0 are filtered out
+
+    Parameters
+    ----------
+    depth: np.ndarray
+        Depth image, shape (H, W)
+    intrinsics: np.ndarray
+        Intrinsics matrix with shape (3, 3)
+
+    Returns
+    -------
+    np.ndarray
+        Point cloud with shape (N, 3)
+    """
+    # Get image dimensions
+    height, width = depth.shape
+    # Create meshgrid for pixel coordinates
+    v, u = np.meshgrid(range(height), range(width), indexing="ij")
+    # Flatten the arrays
+    u = u.flatten()
+    v = v.flatten()
+    depth_flat = depth.flatten()
+    # Filter out invalid depth values
+    valid = depth_flat > 0
+    u = u[valid]
+    v = v[valid]
+    depth_flat = depth_flat[valid]
+    # Create homogeneous pixel coordinates
+    pixels = np.stack([u, v, np.ones_like(u)], axis=0)
+    # Convert pixel coordinates to camera coordinates
+    rays = np.linalg.inv(intrinsics) @ pixels
+    # Scale rays by depth
+    points = rays * depth_flat
+    return points.T
+
+
+def calculate_table_height(pc, z_min=0.65, z_max=0.75):
+    # 筛选出 z 值在范围内的点
+    filtered_points = pc[
+        (pc[:, 0] > PC_MIN[0])
+        & (pc[:, 0] < PC_MAX[0])
+        & (pc[:, 1] > PC_MIN[1])
+        & (pc[:, 1] < PC_MAX[1])
+        & (pc[:, 2] >= z_min)
+        & (pc[:, 2] <= z_max)
+    ]
+    if len(filtered_points) == 0:
+        raise ValueError("筛选后没有点，检查输入或调整 z 值范围")
+    
+    # 计算 z 均值
+    table_height = np.mean(filtered_points[:, 2])
+    return table_height
+
+def get_workspace_mask(pc: np.ndarray) -> np.ndarray:
+    """Get the mask of the point cloud in the workspace."""
+    table_height = calculate_table_height(pc)
+    pc_mask = (
+        (pc[:, 0] > PC_MIN[0])
+        & (pc[:, 0] < PC_MAX[0])
+        & (pc[:, 1] > PC_MIN[1])
+        & (pc[:, 1] < PC_MAX[1])
+        & (pc[:, 2] > table_height + 0.005)
+        & (pc[:, 2] < PC_MAX[2])
+    )
+    return pc_mask
 
 def detect_driller_pose(img, depth, camera_matrix, camera_pose):
     """
@@ -26,7 +343,13 @@ def detect_driller_pose(img, depth, camera_matrix, camera_pose):
     pc_mask = get_workspace_mask(full_pc_world)
     sel_pc_idx = np.random.randint(0, np.sum(pc_mask), 1024)
     pc_camera = full_pc_camera[pc_mask][sel_pc_idx]
-    rel_pose = pose_detector.detect_pose(pc_camera)
+    # rel_pose = pose_detector.detect_pose(pc_camera)
+
+    pc_camera = torch.tensor(pc_camera, device=device, dtype=torch.float32)
+    with torch.no_grad():
+        trans_pred, rot_pred = model.est(pc_camera.reshape(1, -1, 3))
+    rel_pose = to_pose(trans_pred.cpu().numpy(), rot_pred.cpu().numpy())
+
     pose = camera_pose @ rel_pose
     # plot_pointclouds_with_poses(
     #     random_sampling(full_pc_world, 50000), 

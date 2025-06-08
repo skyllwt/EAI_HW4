@@ -2,7 +2,6 @@ import os
 import random
 from typing import Optional
 import numpy as np
-import torch
 
 from transforms3d.quaternions import quat2mat
 
@@ -116,88 +115,3 @@ def rot_dist(r1: np.ndarray, r2: np.ndarray) -> float:
     """
     return np.arccos(np.clip((np.trace(r1 @ r2.T) - 1) / 2, -1, 1))
 
-def get_pc(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
-    """
-    Convert depth image into point cloud using intrinsics
-
-    All points with depth=0 are filtered out
-
-    Parameters
-    ----------
-    depth: np.ndarray
-        Depth image, shape (H, W)
-    intrinsics: np.ndarray
-        Intrinsics matrix with shape (3, 3)
-
-    Returns
-    -------
-    np.ndarray
-        Point cloud with shape (N, 3)
-    """
-    # Get image dimensions
-    height, width = depth.shape
-    # Create meshgrid for pixel coordinates
-    v, u = np.meshgrid(range(height), range(width), indexing="ij")
-    # Flatten the arrays
-    u = u.flatten()
-    v = v.flatten()
-    depth_flat = depth.flatten()
-    # Filter out invalid depth values
-    valid = depth_flat > 0
-    u = u[valid]
-    v = v[valid]
-    depth_flat = depth_flat[valid]
-    # Create homogeneous pixel coordinates
-    pixels = np.stack([u, v, np.ones_like(u)], axis=0)
-    # Convert pixel coordinates to camera coordinates
-    rays = np.linalg.inv(intrinsics) @ pixels
-    # Scale rays by depth
-    points = rays * depth_flat
-    return points.T
-
-
-def calculate_table_height(pc, z_min=0.65, z_max=0.75):
-    # 筛选出 z 值在范围内的点
-    filtered_points = pc[
-        (pc[:, 0] > PC_MIN[0])
-        & (pc[:, 0] < PC_MAX[0])
-        & (pc[:, 1] > PC_MIN[1])
-        & (pc[:, 1] < PC_MAX[1])
-        & (pc[:, 2] >= z_min)
-        & (pc[:, 2] <= z_max)
-    ]
-    if len(filtered_points) == 0:
-        raise ValueError("筛选后没有点，检查输入或调整 z 值范围")
-    
-    # 计算 z 均值
-    table_height = np.mean(filtered_points[:, 2])
-    return table_height
-
-def get_workspace_mask(pc: np.ndarray) -> np.ndarray:
-    """Get the mask of the point cloud in the workspace."""
-    table_height = calculate_table_height(pc)
-    pc_mask = (
-        (pc[:, 0] > PC_MIN[0])
-        & (pc[:, 0] < PC_MAX[0])
-        & (pc[:, 1] > PC_MIN[1])
-        & (pc[:, 1] < PC_MAX[1])
-        & (pc[:, 2] > table_height + 0.005)
-        & (pc[:, 2] < PC_MAX[2])
-    )
-    return pc_mask
-
-def set_seed(seed: int):
-    """
-    Set random seed for reproducibility.
-
-    Parameters
-    ----------
-    seed: int
-        Random seed between 0 and 2**32 - 1
-    """
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
